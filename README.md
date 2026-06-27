@@ -30,6 +30,7 @@
 - [Testing](#testing)
 - [Security](#security)
 - [Contributing](#contributing)
+- [Built with](#built-with)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
 
@@ -562,10 +563,22 @@ Contributions are welcome! See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the wo
 
 [MIT](./LICENSE) © 2026 Alex Breno
 
+## Built with
+
+This project was **entirely built via vibe coding** using the **MiniMax M3** AI model from [MiniMax](https://minimax.com).
+
+- **Code generation:** Every line of source code, tests, configuration, and documentation in this repository was written by **MiniMax M3** in collaboration with a human project owner.
+- **Methodology:** *Vibe coding* — the human described intent, requirements, and constraints; the AI generated, refactored, tested, and documented the implementation. The human reviewed, steered, and approved every change.
+- **AI model:** [MiniMax M3](https://minimax.com) (`opencode-go/minimax-m3`), a large language model from MiniMax, a global AI foundation model company founded in 2022.
+- **Image generation API:** [MiniMax](https://api.minimax.io) — the upstream `image-01` model that this MCP server wraps. (Same parent company as the AI model above; different product.)
+
+If you want to build something similar with MiniMax M3, see the [MCP](https://modelcontextprotocol.io) and [Zod](https://zod.dev) docs — the same patterns (Zod-validated tools, stdio transport, outputSchema) compose cleanly with any domain API.
+
 ## Acknowledgments
 
 - [Model Context Protocol](https://modelcontextprotocol.io) — the open protocol that makes this server possible
 - [MiniMax](https://api.minimax.io) — the image generation API
+- [MiniMax](https://minimax.com) — the AI model and the company behind it
 - [@modelcontextprotocol/typescript-sdk](https://github.com/modelcontextprotocol/typescript-sdk) — the SDK this server is built on
 - [AWS Architecture Blog — Exponential Backoff and Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/) — the canonical reference for the retry algorithm used here
 - [Zod](https://zod.dev) — runtime validation
