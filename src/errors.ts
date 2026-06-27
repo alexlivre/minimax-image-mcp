@@ -3,6 +3,7 @@ import {
   FATAL_ERRORS,
   ERROR_MESSAGES,
 } from "./constants.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 export class MiniMaxApiError extends Error {
   constructor(
@@ -28,10 +29,16 @@ export class MiniMaxApiError extends Error {
   }
 }
 
-export function toErrorResult(error: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-  isError: true;
-} {
+export class EmptyResponseError extends Error {
+  readonly code = "EMPTY_RESPONSE";
+
+  constructor(message = "API returned success but no images") {
+    super(message);
+    this.name = "EmptyResponseError";
+  }
+}
+
+export function toErrorResult(error: unknown): CallToolResult {
   if (error instanceof MiniMaxApiError) {
     const parts = [
       `MiniMax API error: ${error.statusMsg}`,
@@ -57,10 +64,7 @@ export function toErrorResult(error: unknown): {
 export function toTextResult(
   text: string,
   structuredContent?: Record<string, unknown>
-): {
-  content: Array<{ type: "text"; text: string }>;
-  structuredContent?: Record<string, unknown>;
-} {
+): CallToolResult {
   return {
     content: [{ type: "text" as const, text }],
     ...(structuredContent ? { structuredContent } : {}),

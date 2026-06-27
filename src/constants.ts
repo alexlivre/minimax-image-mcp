@@ -5,8 +5,8 @@ export const MODEL_ID = "image-01";
 // Limits
 export const MAX_PROMPT_LENGTH = 1500;
 export const MAX_IMAGES_PER_REQUEST = 9;
+export const MAX_BACKOFF_MS = 30000;
 export const DEFAULT_TIMEOUT_MS = 60000;
-export const CHARACTER_LIMIT = 25000;
 
 // Aspect Ratios
 export const ASPECT_RATIOS = [
@@ -14,6 +14,10 @@ export const ASPECT_RATIOS = [
 ] as const;
 
 export type AspectRatio = typeof ASPECT_RATIOS[number];
+
+// Default values
+export const DEFAULT_ASPECT_RATIO: AspectRatio = "1:1";
+export const DEFAULT_RESPONSE_FORMAT: ResponseFormat = "base64";
 
 // Response Formats
 export const RESPONSE_FORMATS = ["url", "base64"] as const;

@@ -1,18 +1,18 @@
 import { z } from "zod";
-import { ASPECT_RATIOS, RESPONSE_FORMATS } from "./constants.js";
+import { ASPECT_RATIOS, DEFAULT_ASPECT_RATIO, DEFAULT_RESPONSE_FORMAT, MAX_IMAGES_PER_REQUEST, MAX_PROMPT_LENGTH, RESPONSE_FORMATS } from "./constants.js";
 
 export const ImageGenerateSchema = z.object({
   prompt: z
     .string()
     .min(1, "Prompt é obrigatório")
-    .max(1500, "Prompt deve ter no máximo 1500 caracteres")
+    .max(MAX_PROMPT_LENGTH, "Prompt deve ter no máximo 1500 caracteres")
     .describe(
       "Descrição da imagem a gerar. Máximo 1500 caracteres."
     ),
 
   aspect_ratio: z
     .enum(ASPECT_RATIOS)
-    .default("1:1")
+    .default(DEFAULT_ASPECT_RATIO)
     .describe(
       "Proporção da imagem. Opções: 1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9"
     ),
@@ -21,7 +21,7 @@ export const ImageGenerateSchema = z.object({
     .number()
     .int()
     .min(1, "Mínimo 1 imagem")
-    .max(9, "Máximo 9 imagens por chamada")
+    .max(MAX_IMAGES_PER_REQUEST, "Máximo 9 imagens por chamada")
     .default(1)
     .describe(
       "Número de imagens a gerar (1-9). Usar 9 é 8× mais rápido que 9 chamadas separadas."
@@ -30,6 +30,8 @@ export const ImageGenerateSchema = z.object({
   seed: z
     .number()
     .int()
+    .min(0, "Seed deve ser >= 0")
+    .max(4294967295, "Seed deve caber em uint32")
     .optional()
     .describe(
       "Seed para reprodutibilidade. Mesmo seed + mesmos parâmetros = mesma imagem."
@@ -37,7 +39,7 @@ export const ImageGenerateSchema = z.object({
 
   response_format: z
     .enum(RESPONSE_FORMATS)
-    .default("base64")
+    .default(DEFAULT_RESPONSE_FORMAT)
     .describe(
       "Formato de resposta. 'base64' para persistência (recomendado), 'url' expira em 24h."
     ),
@@ -72,3 +74,36 @@ export const ImageGenerateSchema = z.object({
 });
 
 export type ImageGenerateInput = z.infer<typeof ImageGenerateSchema>;
+
+export const ImageGenerateResponseSchema = z.object({
+  id: z.string(),
+  data: z.object({
+    image_urls: z.array(z.string().url()).optional(),
+    image_base64: z.array(z.string()).optional(),
+  }),
+  metadata: z.object({
+    failed_count: z.string(),
+    success_count: z.string(),
+  }),
+  base_resp: z.object({
+    status_code: z.number(),
+    status_msg: z.string(),
+  }),
+});
+
+export type ImageGenerateResponse = z.infer<typeof ImageGenerateResponseSchema>;
+
+export const ImageGenerateOutputSchema = z.object({
+  id: z.string(),
+  image_count: z.number().int(),
+  saved_count: z.number().int(),
+  file_paths: z.array(z.string()),
+  failures: z
+    .array(z.object({ index: z.number().int(), error: z.string() }))
+    .optional(),
+  metadata: z.object({
+    failed_count: z.string(),
+    success_count: z.string(),
+  }),
+});
+export type ImageGenerateOutput = z.infer<typeof ImageGenerateOutputSchema>;

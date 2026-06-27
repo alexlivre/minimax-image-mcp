@@ -1,24 +1,11 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { mkdir } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { MiniMaxClient } from "./client.js";
-import { ImageGenerateSchema } from "./schemas.js";
-import { toTextResult, toErrorResult } from "./errors.js";
-import { resolveOutputDir, saveImage } from "./utils.js";
-
-function readPackageMetadata(): { name: string; version: string } {
-  try {
-    const pkgUrl = new URL("../package.json", import.meta.url);
-    const raw = readFileSync(fileURLToPath(pkgUrl), "utf8");
-    const pkg = JSON.parse(raw) as { name?: string; version?: string };
-    return {
-      name: pkg.name ?? "minimax-image-mcp",
-      version: pkg.version ?? "1.0.0",
-    };
-  } catch {
-    return { name: "minimax-image-mcp", version: "1.0.0" };
-  }
-}
+import { ImageGenerateOutputSchema, ImageGenerateSchema } from "./schemas.js";
+import { EmptyResponseError, toErrorResult, toTextResult } from "./errors.js";
+import { readPackageMetadata, resolveOutputDir, saveImage } from "./utils.js";
 
 const { name: PKG_NAME, version: PKG_VERSION } = readPackageMetadata();
 
@@ -59,6 +46,7 @@ export function createServer(client: MiniMaxClient): McpServer {
         "and seed-based reproducibility. " +
         "Images are saved to disk and file paths are returned.",
       inputSchema: ImageGenerateSchema.shape,
+      outputSchema: ImageGenerateOutputSchema.shape,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -66,9 +54,31 @@ export function createServer(client: MiniMaxClient): McpServer {
         openWorldHint: true,
       },
     },
-    async (params) => {
+    async (params, extra) => {
+      const createNotifier = (extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
+        const token = extra._meta?.progressToken;
+        if (token === undefined) {
+          return async () => {};
+        }
+        return async (progress: number, total: number, message: string) => {
+          try {
+            await extra.sendNotification({
+              method: "notifications/progress",
+              params: { progressToken: token, progress, total, message },
+            });
+          } catch {
+            // progress is best-effort; never break the tool
+          }
+        };
+      };
+      const notify = createNotifier(extra);
+
       try {
         const outputDir = resolveOutputDir(params.output_dir);
+        await mkdir(outputDir, { recursive: true });
+
+        const total = params.n ?? 1;
+        await notify(0, total, "Requesting MiniMax API...");
 
         const response = await client.generateImage({
           prompt: params.prompt,
@@ -82,28 +92,55 @@ export function createServer(client: MiniMaxClient): McpServer {
 
         const images = response.data?.image_base64 ?? [];
         if (images.length === 0) {
-          return toErrorResult(new Error("API retornou sucesso mas sem imagens"));
+          return toErrorResult(new EmptyResponseError());
         }
+
+        await notify(total, total, "Saving images to disk...");
+
+        const results = await Promise.allSettled(
+          images.map((image, i) => saveImage(image, params.prompt, outputDir, i))
+        );
 
         const savedPaths: string[] = [];
-        for (let i = 0; i < images.length; i++) {
-          const path = await saveImage(images[i], params.prompt, outputDir, i);
-          savedPaths.push(path);
+        const failures: Array<{ index: number; error: string }> = [];
+        for (const [i, r] of results.entries()) {
+          if (r.status === "fulfilled") {
+            savedPaths.push(r.value);
+          } else {
+            failures.push({
+              index: i,
+              error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+            });
+          }
         }
 
-        const text = [
-          `Generated ${images.length} image(s) successfully.`,
+        if (savedPaths.length === 0) {
+          return toErrorResult(
+            new Error(
+              `Falha ao salvar todas as ${images.length} imagens: ${failures.map(f => f.error).join("; ")}`
+            )
+          );
+        }
+
+        const textLines = [
+          `Generated ${images.length} image(s); saved ${savedPaths.length}.`,
+          ...(failures.length > 0 ? [`Failed to save: ${failures.length}`] : []),
           "",
           "Saved files:",
           ...savedPaths.map((p, i) => `  ${i + 1}. ${p}`),
+          ...(failures.length > 0
+            ? ["", "Save failures:", ...failures.map(f => `  #${f.index + 1}: ${f.error}`)]
+            : []),
           "",
-          `Metadata: ${response.metadata?.success_count ?? images.length} succeeded, ${response.metadata?.failed_count ?? 0} failed`,
-        ].join("\n");
+          `Metadata: ${response.metadata?.success_count ?? savedPaths.length} succeeded, ${response.metadata?.failed_count ?? failures.length} failed`,
+        ];
 
-        return toTextResult(text, {
+        return toTextResult(textLines.join("\n"), {
           id: response.id,
           image_count: images.length,
+          saved_count: savedPaths.length,
           file_paths: savedPaths,
+          ...(failures.length > 0 ? { failures } : {}),
           metadata: response.metadata,
         });
       } catch (error) {

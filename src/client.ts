@@ -1,18 +1,22 @@
+import { z } from "zod";
 import {
   IMAGE_API_URL,
   MODEL_ID,
+  MAX_BACKOFF_MS,
   MAX_RETRIES,
   RETRY_DELAY_1002_MS,
   RETRY_DELAY_2045_MS,
   DEFAULT_TIMEOUT_MS,
 } from "./constants.js";
 import { MiniMaxApiError } from "./errors.js";
+import {
+  ImageGenerateResponseSchema,
+  type ImageGenerateResponse,
+} from "./schemas.js";
 
 export interface ImageGenerateParams {
   prompt: string;
   aspect_ratio?: string;
-  width?: number;
-  height?: number;
   response_format?: "url" | "base64";
   n?: number;
   seed?: number;
@@ -20,30 +24,11 @@ export interface ImageGenerateParams {
   subject_reference?: Array<{ type: "character"; image_file: string }>;
 }
 
-export interface ImageGenerateResponse {
-  id: string;
-  data: {
-    image_urls?: string[];
-    image_base64?: string[];
-  };
-  metadata: {
-    failed_count: string;
-    success_count: string;
-  };
-  base_resp: {
-    status_code: number;
-    status_msg: string;
-  };
-}
-
 export class MiniMaxClient {
-  private apiKey: string;
-  private timeout: number;
-
-  constructor(apiKey: string, timeout = DEFAULT_TIMEOUT_MS) {
-    this.apiKey = apiKey;
-    this.timeout = timeout;
-  }
+  constructor(
+    private readonly apiKey: string,
+    private readonly timeout: number = DEFAULT_TIMEOUT_MS,
+  ) {}
 
   async generateImage(
     params: ImageGenerateParams
@@ -65,7 +50,7 @@ export class MiniMaxClient {
           signal: AbortSignal.timeout(this.timeout),
         });
 
-        const data = (await response.json()) as ImageGenerateResponse;
+        const data = ImageGenerateResponseSchema.parse(await response.json());
         const statusCode = data.base_resp?.status_code;
 
         if (statusCode !== 0) {
@@ -93,8 +78,16 @@ export class MiniMaxClient {
           }
         }
 
+        if (error instanceof z.ZodError) {
+          throw new Error(
+            `Unexpected API response shape: ${error.issues.map((i) => `${i.path.join(".")} - ${i.message}`).join("; ")}`
+          );
+        }
+
         if (attempt < MAX_RETRIES) {
-          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+          const exponential = Math.min(MAX_BACKOFF_MS, 1000 * Math.pow(2, attempt));
+          const delay = Math.random() * exponential; // Full Jitter (AWS)
+          await new Promise((r) => setTimeout(r, Math.round(delay)));
           continue;
         }
       }

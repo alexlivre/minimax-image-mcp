@@ -14,8 +14,24 @@ async function main(): Promise<void> {
 
   const client = new MiniMaxClient(apiKey);
   const server = createServer(client);
-
   const transport = new StdioServerTransport();
+
+  let isShuttingDown = false;
+  const shutdown = async (signal: string): Promise<void> => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.error(`Received ${signal}, shutting down...`);
+    try {
+      await server.close();
+    } catch (err) {
+      console.error("Error during server.close():", err);
+    }
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+
   await server.connect(transport);
   console.error("MiniMax Image MCP server running on stdio");
 }
