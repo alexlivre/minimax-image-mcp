@@ -2,6 +2,8 @@
 
 > A Model Context Protocol (MCP) server that wraps the [MiniMax](https://api.minimax.io) image generation API. Exposes a single tool, `minimax_image_generate`, that any MCP-compatible client (Claude Desktop, opencode, Cursor, etc.) can call to generate images from text prompts.
 
+[![npm version](https://img.shields.io/npm/v/minimax-image-mcp.svg)](https://www.npmjs.com/package/minimax-image-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/minimax-image-mcp.svg)](https://www.npmjs.com/package/minimax-image-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Node 18+](https://img.shields.io/badge/node-18%2B-brightgreen)](https://nodejs.org)
 [![TypeScript 5.7](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
@@ -16,6 +18,7 @@
 - [Features](#features)
 - [Quickstart](#quickstart)
 - [Installation](#installation)
+- [Using via npm](#using-via-npm)
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [API Reference](#api-reference)
@@ -60,24 +63,21 @@ If you use an MCP-aware LLM client and want to generate images from natural-lang
 ## Quickstart
 
 ```bash
-# 1. Install
-git clone https://github.com/alexlivre/minimax-image-mcp.git
-cd minimax-image-mcp
-npm install
-npm run build
+# 1. Install via npm (no build step required)
+npm install -g minimax-image-mcp
 
 # 2. Get an API key from the MiniMax dashboard, then export it
 export MINIMAX_API_KEY="sk-cp-your-key-here"
 
 # 3. Smoke-test the server
-node dist/index.js
+node "$(npm root -g)/minimax-image-mcp/dist/index.js"
 #   → stderr: "MiniMax Image MCP server running on stdio"
 #   → stdout: empty (waits for MCP frames from the client)
 
-# 4. Configure your MCP client (example for opencode below) and start a session
+# 4. Configure your MCP client (examples below) and start a session
 ```
 
-That's it. The server speaks stdio, so any MCP client can attach to `node dist/index.js`.
+That's it. The server speaks stdio, so any MCP client can attach to `node <npm-path>/minimax-image-mcp/dist/index.js`. See [Using via npm](#using-via-npm) for the cross-platform install path and full client configs.
 
 ## Installation
 
@@ -87,7 +87,29 @@ That's it. The server speaks stdio, so any MCP client can attach to `node dist/i
 - **npm 9+** (ships with Node 18+)
 - A **MiniMax API key** — request one from the [MiniMax dashboard](https://api.minimax.io)
 
-### From source (recommended for now)
+### Option A — From npm (recommended for end users)
+
+The fastest path. No build step, no git clone. The package is published to the public npm registry as `minimax-image-mcp`.
+
+```bash
+# Global install (system-wide; recommended for MCP servers)
+npm install -g minimax-image-mcp
+
+# Verify the install
+npm ls -g minimax-image-mcp
+# minimax-image-mcp@1.0.0 <npm-global-path>
+
+# Show the install path (used in your MCP client config)
+npm root -g
+# On Linux/macOS: /usr/local/lib/node_modules
+# On Windows:    C:\Users\<you>\AppData\Roaming\npm\node_modules
+```
+
+The compiled `dist/` ships with the npm tarball, so **no build step is required** — the package is ready to run as soon as it installs.
+
+### Option B — From source (for contributors and customization)
+
+Use this if you want to modify the code, run the test suite, or pin to a specific unreleased commit.
 
 ```bash
 git clone https://github.com/alexlivre/minimax-image-mcp.git
@@ -96,31 +118,52 @@ npm install
 npm run build
 ```
 
-The compiled output lives in `dist/`. Your MCP client invokes `node <path>/dist/index.js`.
+The compiled output lives in `dist/`. Your MCP client invokes `node <repo-path>/dist/index.js`.
 
-### (Future) From npm
+## Using via npm
+
+The **recommended** way to run `minimax-image-mcp` is via the published npm package. This section explains the cross-platform install path, then shows full client configuration for the most popular MCP clients.
+
+### 1. Install the package
 
 ```bash
 npm install -g minimax-image-mcp
 ```
 
-Not yet published. Track [issue #X](https://github.com/alexlivre/minimax-image-mcp/issues) for progress.
+This places the package in your global `node_modules` and makes the `dist/index.js` entry point available at a known path.
 
-## Configuration
+### 2. Find the install path
 
-The server reads **one environment variable**:
+The npm global install path differs by OS. Use `npm root -g` to discover yours:
 
-| Variable | Required | Description |
+| OS | Global install root | Path to server entry |
 | --- | --- | --- |
-| `MINIMAX_API_KEY` | ✅ | Bearer token for the MiniMax API. **Never commit this.** |
+| **Linux** | `$(npm root -g)` | `$(npm root -g)/minimax-image-mcp/dist/index.js` |
+| **macOS** | `$(npm root -g)` | `$(npm root -g)/minimax-image-mcp/dist/index.js` |
+| **Windows** | `%APPDATA%\npm\node_modules` | `%APPDATA%\npm\node_modules\minimax-image-mcp\dist\index.js` |
 
-You can also optionally set:
+**Tip:** in the JSON examples below, replace `<npm-global-root>` with the path printed by `npm root -g` for your OS. Or use the literal path from the table.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `MINIMAX_OUTPUT_DIR` | `./output` | Base directory for saved images. The `output_dir` tool parameter is resolved relative to this (or, if absolute, must be inside this path). |
+### 3. Get an API key
 
-### MCP client configuration
+Request a MiniMax API key from the [MiniMax dashboard](https://api.minimax.io). Set it in your environment before launching the MCP client:
+
+```bash
+# Linux / macOS (bash, zsh)
+export MINIMAX_API_KEY="sk-cp-your-key-here"
+
+# Windows PowerShell
+$env:MINIMAX_API_KEY = "sk-cp-your-key-here"
+
+# Windows cmd
+set MINIMAX_API_KEY=sk-cp-your-key-here
+```
+
+> **Never commit this key.** The `.gitignore` covers `apikey.txt` and `.env`; rotate it immediately if you ever paste it into a file that gets pushed.
+
+### 4. Configure your MCP client
+
+The MCP client must spawn `node <npm-global-root>/minimax-image-mcp/dist/index.js` with `MINIMAX_API_KEY` in the environment. Below are complete configs for the most popular clients — all using the **npm-installed** path.
 
 #### opencode
 
@@ -131,7 +174,7 @@ Add to `~/.config/opencode/opencode.json`:
   "mcp": {
     "minimax-image": {
       "type": "local",
-      "command": ["node", "/absolute/path/to/minimax-image-mcp/dist/index.js"],
+      "command": ["node", "<npm-global-root>/minimax-image-mcp/dist/index.js"],
       "environment": {
         "MINIMAX_API_KEY": "sk-cp-your-key-here"
       },
@@ -141,6 +184,8 @@ Add to `~/.config/opencode/opencode.json`:
 }
 ```
 
+> **Tip:** if `opencode` is the tool you use daily, you can resolve the path with shell substitution: `$(npm root -g)/minimax-image-mcp/dist/index.js`. For maximum portability across machines, paste the literal path from `npm root -g`.
+
 #### Claude Desktop
 
 Add to `claude_desktop_config.json`:
@@ -149,12 +194,30 @@ Add to `claude_desktop_config.json`:
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 - **Linux:** `~/.config/Claude/claude_desktop_config.json`
 
+**Linux / macOS:**
+
 ```json
 {
   "mcpServers": {
     "minimax-image": {
       "command": "node",
-      "args": ["/absolute/path/to/minimax-image-mcp/dist/index.js"],
+      "args": ["<npm-global-root>/minimax-image-mcp/dist/index.js"],
+      "env": {
+        "MINIMAX_API_KEY": "sk-cp-your-key-here"
+      }
+    }
+  }
+}
+```
+
+**Windows** (use the Windows-specific path):
+
+```json
+{
+  "mcpServers": {
+    "minimax-image": {
+      "command": "node",
+      "args": ["%APPDATA%\\npm\\node_modules\\minimax-image-mcp\\dist\\index.js"],
       "env": {
         "MINIMAX_API_KEY": "sk-cp-your-key-here"
       }
@@ -167,12 +230,49 @@ Add to `claude_desktop_config.json`:
 
 In **Cursor → Settings → MCP**, click **Add new global MCP server** and paste:
 
+**Linux / macOS:**
+
 ```json
 {
   "mcpServers": {
     "minimax-image": {
       "command": "node",
-      "args": ["/absolute/path/to/minimax-image-mcp/dist/index.js"],
+      "args": ["<npm-global-root>/minimax-image-mcp/dist/index.js"],
+      "env": {
+        "MINIMAX_API_KEY": "sk-cp-your-key-here"
+      }
+    }
+  }
+}
+```
+
+**Windows:**
+
+```json
+{
+  "mcpServers": {
+    "minimax-image": {
+      "command": "node",
+      "args": ["%APPDATA%\\npm\\node_modules\\minimax-image-mcp\\dist\\index.js"],
+      "env": {
+        "MINIMAX_API_KEY": "sk-cp-your-key-here"
+      }
+    }
+  }
+}
+```
+
+#### VS Code (with MCP extension)
+
+In `.vscode/mcp.json` (workspace) or VS Code user settings (global):
+
+```json
+{
+  "servers": {
+    "minimax-image": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["<npm-global-root>/minimax-image-mcp/dist/index.js"],
       "env": {
         "MINIMAX_API_KEY": "sk-cp-your-key-here"
       }
@@ -183,7 +283,39 @@ In **Cursor → Settings → MCP**, click **Add new global MCP server** and past
 
 #### Other clients
 
-Any client that supports MCP over stdio can use this server. The contract is simple: spawn `node <path>/dist/index.js` with `MINIMAX_API_KEY` in the environment, and the server will speak MCP on stdio.
+Any client that supports MCP over stdio can use this server. The contract is:
+
+- **Spawn:** `node <path-to-server>/dist/index.js`
+- **Env:** `MINIMAX_API_KEY` must be set
+- **Stdio:** server speaks MCP JSON-RPC on stdout/stdin; logs go to stderr
+
+### 5. Update later
+
+To upgrade to a new version:
+
+```bash
+npm update -g minimax-image-mcp
+# or, for major versions:
+npm install -g minimax-image-mcp@latest
+```
+
+Then **restart your MCP client** so it picks up the new binary. Your config (env, paths) does not need to change.
+
+## Configuration
+
+The server reads **one required environment variable**:
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `MINIMAX_API_KEY` | ✅ | Bearer token for the MiniMax API. **Never commit this.** |
+
+You can also optionally set:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `MINIMAX_OUTPUT_DIR` | `./output` | Base directory for saved images. The `output_dir` tool parameter is resolved relative to this (or, if absolute, must be inside this path). |
+
+For ready-to-use client configuration snippets (opencode, Claude Desktop, Cursor, VS Code) — including cross-platform paths for the **npm-installed** binary — see [Using via npm](#using-via-npm).
 
 ## Usage
 
@@ -438,6 +570,14 @@ Contributions are welcome! See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the wo
 - [AWS Architecture Blog — Exponential Backoff and Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/) — the canonical reference for the retry algorithm used here
 - [Zod](https://zod.dev) — runtime validation
 - [Vitest](https://vitest.dev) — testing framework
+
+## Links
+
+- **npm package:** [minimax-image-mcp on npm](https://www.npmjs.com/package/minimax-image-mcp)
+- **Source code:** [github.com/alexlivre/minimax-image-mcp](https://github.com/alexlivre/minimax-image-mcp)
+- **Issue tracker:** [GitHub Issues](https://github.com/alexlivre/minimax-image-mcp/issues)
+- **Releases:** [GitHub Releases](https://github.com/alexlivre/minimax-image-mcp/releases)
+- **Security policy:** [SECURITY.md](./SECURITY.md)
 
 ---
 
