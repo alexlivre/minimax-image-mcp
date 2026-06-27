@@ -29,5 +29,28 @@
     "eslint": "^9.0.0",
     "typescript-eslint": "^8.0.0",
     "vitest": "^1.6.0"
-  }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "minimax",
+    "image-generation",
+    "ai",
+    "claude",
+    "opencode",
+    "cursor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexlivre/minimax-image-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alexlivre/minimax-image-mcp/issues"
+  },
+  "homepage": "https://github.com/alexlivre/minimax-image-mcp#readme"
 }

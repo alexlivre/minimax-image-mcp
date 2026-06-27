@@ -6,7 +6,7 @@
 [![Node 18+](https://img.shields.io/badge/node-18%2B-brightgreen)](https://nodejs.org)
 [![TypeScript 5.7](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
 [![CI](https://github.com/alexlivre/minimax-image-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/alexlivre/minimax-image-mcp/actions)
-[![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)](./vitest.config.ts)
+[![codecov](https://codecov.io/gh/alexlivre/minimax-image-mcp/graph/badge.svg)](https://codecov.io/gh/alexlivre/minimax-image-mcp)
 
 ---
 

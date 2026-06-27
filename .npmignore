@@ -1,0 +1,32 @@
+# Source files
+src/
+
+# Configs (não necessários em runtime)
+tsconfig.json
+vitest.config.ts
+eslint.config.mjs
+.editorconfig
+.gitattributes
+
+# Test artifacts
+coverage/
+*.test.ts
+src/**/*.test.ts
+
+# CI / docs
+.github/
+.gitignore
+.gitattributes
+.editorconfig
+
+# Local-only files
+apikey.txt
+.env
+*.log
+output/
+ANALYSIS.md
+AGENTS.md
+CONTRIBUTING.md
+SECURITY.md
+MiniMax-guia-completo-image-01.md
+guia-minimax-api.md
