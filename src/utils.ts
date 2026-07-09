@@ -17,7 +17,7 @@ export function resolveOutputDir(dir?: string): string {
 
   if (resolved !== allowed && !resolved.startsWith(allowed + sep)) {
     throw new Error(
-      `output_dir fora do diretório permitido: ${resolved}\nPermitido: ${allowed}`
+      `output_dir outside allowed directory: ${resolved}\nAllowed: ${allowed}`
     );
   }
   return resolved;
@@ -30,6 +30,19 @@ export function sanitizeFilename(prompt: string, maxLength = 50): string {
       .replace(/[^a-z0-9\s-]/g, "")
       .replace(/\s+/g, "-")
       .slice(0, maxLength) || "image"
+  );
+}
+
+const IMAGE_MAGIC_BYTES: ReadonlyArray<readonly number[]> = [
+  [0xff, 0xd8, 0xff],
+  [0x89, 0x50, 0x4e, 0x47],
+  [0x52, 0x49, 0x46, 0x46],
+];
+
+export function isValidImage(buffer: Buffer): boolean {
+  if (buffer.length < 4) return false;
+  return IMAGE_MAGIC_BYTES.some((magic) =>
+    magic.every((byte, i) => buffer[i] === byte),
   );
 }
 
@@ -46,9 +59,33 @@ export async function saveImage(
   const filepath = join(outputDir, filename);
 
   const buffer = Buffer.from(base64Data, "base64");
+
+  if (!isValidImage(buffer)) {
+    throw new Error(
+      `Image ${index + 1} data is not a valid image format (JPEG, PNG, WebP). First bytes: ${buffer.subarray(0, 4).toString("hex")}`
+    );
+  }
+
   await writeFile(filepath, buffer);
 
   return filepath;
+}
+
+export async function downloadImageFromUrl(url: string): Promise<Buffer> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `Failed to download image from URL: ${response.status} ${response.statusText}`
+    );
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (!isValidImage(buffer)) {
+    throw new Error(
+      `Downloaded data from URL is not a valid image: ${url}`
+    );
+  }
+  return buffer;
 }
 
 export function readPackageMetadata(): { name: string; version: string } {

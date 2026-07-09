@@ -12,12 +12,13 @@ export default defineConfig({
     exclude: [
       "src/**/*.test.ts",
       "src/index.ts",
+      "src/shutdown.ts",
     ],
     thresholds: {
-      lines: 70,
-      functions: 70,
-      branches: 60,
-      statements: 70,
+      lines: 85,
+      functions: 85,
+      branches: 80,
+      statements: 85,
     },
   },
 });

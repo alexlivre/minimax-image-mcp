@@ -7,6 +7,7 @@ import {
   RETRY_DELAY_1002_MS,
   RETRY_DELAY_2045_MS,
   DEFAULT_TIMEOUT_MS,
+  BODY_READ_TIMEOUT_MS,
 } from "./constants.js";
 import { MiniMaxApiError } from "./errors.js";
 import {
@@ -50,7 +51,15 @@ export class MiniMaxClient {
           signal: AbortSignal.timeout(this.timeout),
         });
 
-        const data = ImageGenerateResponseSchema.parse(await response.json());
+        const bodyPromise = response.text();
+        const bodyTimeout = new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Response body read timed out")),
+            BODY_READ_TIMEOUT_MS,
+          ),
+        );
+        const raw = await Promise.race([bodyPromise, bodyTimeout]);
+        const data = ImageGenerateResponseSchema.parse(JSON.parse(raw));
         const statusCode = data.base_resp?.status_code;
 
         if (statusCode !== 0) {

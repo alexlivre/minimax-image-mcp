@@ -7,6 +7,7 @@ export const MAX_PROMPT_LENGTH = 1500;
 export const MAX_IMAGES_PER_REQUEST = 9;
 export const MAX_BACKOFF_MS = 30000;
 export const DEFAULT_TIMEOUT_MS = 60000;
+export const BODY_READ_TIMEOUT_MS = 10000;
 
 // Aspect Ratios
 export const ASPECT_RATIOS = [
@@ -28,14 +29,14 @@ export const RETRYABLE_ERRORS = [1002, 2045];
 export const FATAL_ERRORS = [1004, 2049, 2056, 1026, 1027];
 
 export const ERROR_MESSAGES: Record<number, string> = {
-  1002: "Rate limit exceeded. Aguarde 60s e tente novamente.",
-  1004: "Não autorizado. Verifique MINIMAX_API_KEY.",
-  1008: "Saldo insuficiente. Recarregue sua conta MiniMax.",
-  1026: "Prompt bloqueado por conteúdo sensível. Reformule o prompt.",
-  1027: "Output bloqueado por conteúdo sensível. Reformule o prompt.",
-  2045: "Growth limit atingido. Aguarde 30s e tente novamente.",
-  2049: "API Key inválida. Verifique MINIMAX_API_KEY.",
-  2056: "Cota da janela de 5h esgotada. Aguarde ou verifique seu plano.",
+  1002: "Rate limit exceeded. Wait 60s and retry.",
+  1004: "Unauthorized. Verify MINIMAX_API_KEY.",
+  1008: "Insufficient balance. Top up your MiniMax account.",
+  1026: "Prompt blocked due to sensitive content. Revise the prompt.",
+  1027: "Output blocked due to sensitive content. Revise the prompt.",
+  2045: "Growth limit reached. Wait 30s and retry.",
+  2049: "Invalid API key. Verify MINIMAX_API_KEY.",
+  2056: "5-hour quota exhausted. Wait or check your plan.",
 };
 
 // Retry

@@ -162,7 +162,7 @@ describe("createServer", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(
-      /output_dir fora do diretório permitido/,
+      /output_dir outside allowed directory/,
     );
   });
 
@@ -249,7 +249,7 @@ describe("createServer", () => {
     )) as CallToolResult;
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/^Falha ao salvar todas as 1 imagens/);
+    expect(result.content[0].text).toMatch(/^Failed to save all 1 image/);
   });
 
   it("forwards params to client.generateImage in the expected shape", async () => {

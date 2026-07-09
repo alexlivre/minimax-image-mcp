@@ -2,12 +2,29 @@ import { mkdir } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
-import { MiniMaxClient } from "./client.js";
+import type { MiniMaxClient } from "./client.js";
 import { ImageGenerateOutputSchema, ImageGenerateSchema } from "./schemas.js";
 import { EmptyResponseError, toErrorResult, toTextResult } from "./errors.js";
-import { readPackageMetadata, resolveOutputDir, saveImage } from "./utils.js";
+import { downloadImageFromUrl, readPackageMetadata, resolveOutputDir, saveImage } from "./utils.js";
 
 const { name: PKG_NAME, version: PKG_VERSION } = readPackageMetadata();
+
+function createProgressNotifier(extra: RequestHandlerExtra<ServerRequest, ServerNotification>) {
+  const token = extra._meta?.progressToken;
+  if (token === undefined) {
+    return async () => {};
+  }
+  return async (progress: number, total: number, message: string) => {
+    try {
+      await extra.sendNotification({
+        method: "notifications/progress",
+        params: { progressToken: token, progress, total, message },
+      });
+    } catch {
+      // ignore
+    }
+  };
+}
 
 export function createServer(client: MiniMaxClient): McpServer {
   const server = new McpServer(
@@ -55,27 +72,16 @@ export function createServer(client: MiniMaxClient): McpServer {
       },
     },
     async (params, extra) => {
-      const createNotifier = (extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
-        const token = extra._meta?.progressToken;
-        if (token === undefined) {
-          return async () => {};
-        }
-        return async (progress: number, total: number, message: string) => {
-          try {
-            await extra.sendNotification({
-              method: "notifications/progress",
-              params: { progressToken: token, progress, total, message },
-            });
-          } catch {
-            // progress is best-effort; never break the tool
-          }
-        };
-      };
-      const notify = createNotifier(extra);
+      const notify = createProgressNotifier(extra);
 
       try {
         const outputDir = resolveOutputDir(params.output_dir);
-        await mkdir(outputDir, { recursive: true });
+        await mkdir(outputDir, { recursive: true }).catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `Cannot create output directory: ${msg}\n\nEnsure ${outputDir} is writable or set a different output_dir.`
+          );
+        });
 
         const total = params.n ?? 1;
         await notify(0, total, "Requesting MiniMax API...");
@@ -90,16 +96,47 @@ export function createServer(client: MiniMaxClient): McpServer {
           subject_reference: params.subject_reference,
         });
 
-        const images = response.data?.image_base64 ?? [];
-        if (images.length === 0) {
+        const imagesBase64 = response.data?.image_base64 ?? [];
+        const imageUrls = response.data?.image_urls ?? [];
+
+        if (imagesBase64.length === 0 && imageUrls.length === 0) {
           return toErrorResult(new EmptyResponseError());
         }
 
-        await notify(total, total, "Saving images to disk...");
+        const imageCount = imagesBase64.length + imageUrls.length;
+        await notify(imageCount, imageCount, "Saving images to disk...");
 
-        const results = await Promise.allSettled(
-          images.map((image, i) => saveImage(image, params.prompt, outputDir, i))
+        const abortAwareSave = (promise: Promise<string>): Promise<string> => {
+          if (extra.signal.aborted) {
+            return Promise.reject(new Error("Operation cancelled by client"));
+          }
+          return new Promise<string>((resolve, reject) => {
+            const onAbort = () => {
+              extra.signal.removeEventListener("abort", onAbort);
+              reject(new Error("Operation cancelled by client"));
+            };
+            if (extra.signal.aborted) {
+              reject(new Error("Operation cancelled by client"));
+              return;
+            }
+            extra.signal.addEventListener("abort", onAbort, { once: true });
+            promise.then(resolve, reject).finally(() => {
+              extra.signal.removeEventListener("abort", onAbort);
+            });
+          });
+        };
+
+        const base64Promises = imagesBase64.map((image, i) =>
+          abortAwareSave(saveImage(image, params.prompt, outputDir, i))
         );
+
+        const urlPromises = imageUrls.map(async (url, i) => {
+          const buffer = await downloadImageFromUrl(url);
+          const base64 = buffer.toString("base64");
+          return saveImage(base64, params.prompt, outputDir, imagesBase64.length + i);
+        }).map(abortAwareSave);
+
+        const results = await Promise.allSettled([...base64Promises, ...urlPromises]);
 
         const savedPaths: string[] = [];
         const failures: Array<{ index: number; error: string }> = [];
@@ -117,13 +154,13 @@ export function createServer(client: MiniMaxClient): McpServer {
         if (savedPaths.length === 0) {
           return toErrorResult(
             new Error(
-              `Falha ao salvar todas as ${images.length} imagens: ${failures.map(f => f.error).join("; ")}`
+              `Failed to save all ${imageCount} image(s): ${failures.map(f => f.error).join("; ")}`
             )
           );
         }
 
         const textLines = [
-          `Generated ${images.length} image(s); saved ${savedPaths.length}.`,
+          `Generated ${imageCount} image(s); saved ${savedPaths.length}.`,
           ...(failures.length > 0 ? [`Failed to save: ${failures.length}`] : []),
           "",
           "Saved files:",
@@ -132,12 +169,12 @@ export function createServer(client: MiniMaxClient): McpServer {
             ? ["", "Save failures:", ...failures.map(f => `  #${f.index + 1}: ${f.error}`)]
             : []),
           "",
-          `Metadata: ${response.metadata?.success_count ?? savedPaths.length} succeeded, ${response.metadata?.failed_count ?? failures.length} failed`,
+          `Metadata: ${response.metadata.success_count} succeeded, ${response.metadata.failed_count} failed`,
         ];
 
         return toTextResult(textLines.join("\n"), {
           id: response.id,
-          image_count: images.length,
+          image_count: imageCount,
           saved_count: savedPaths.length,
           file_paths: savedPaths,
           ...(failures.length > 0 ? { failures } : {}),

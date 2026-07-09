@@ -4,72 +4,72 @@ import { ASPECT_RATIOS, DEFAULT_ASPECT_RATIO, DEFAULT_RESPONSE_FORMAT, MAX_IMAGE
 export const ImageGenerateSchema = z.object({
   prompt: z
     .string()
-    .min(1, "Prompt é obrigatório")
-    .max(MAX_PROMPT_LENGTH, "Prompt deve ter no máximo 1500 caracteres")
+    .min(1, "Prompt is required")
+    .max(MAX_PROMPT_LENGTH, "Prompt must not exceed 1500 characters")
     .describe(
-      "Descrição da imagem a gerar. Máximo 1500 caracteres."
+      "Image description to generate. Max 1500 characters."
     ),
 
   aspect_ratio: z
     .enum(ASPECT_RATIOS)
     .default(DEFAULT_ASPECT_RATIO)
     .describe(
-      "Proporção da imagem. Opções: 1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9"
+      "Image aspect ratio. Options: 1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9"
     ),
 
   n: z
     .number()
     .int()
-    .min(1, "Mínimo 1 imagem")
-    .max(MAX_IMAGES_PER_REQUEST, "Máximo 9 imagens por chamada")
+    .min(1, "Minimum 1 image")
+    .max(MAX_IMAGES_PER_REQUEST, "Maximum 9 images per call")
     .default(1)
     .describe(
-      "Número de imagens a gerar (1-9). Usar 9 é 8× mais rápido que 9 chamadas separadas."
+      "Number of images to generate (1-9). Using 9 is 8x faster than 9 separate calls."
     ),
 
   seed: z
     .number()
     .int()
-    .min(0, "Seed deve ser >= 0")
-    .max(4294967295, "Seed deve caber em uint32")
+    .min(0, "Seed must be >= 0")
+    .max(4294967295, "Seed must fit in uint32")
     .optional()
     .describe(
-      "Seed para reprodutibilidade. Mesmo seed + mesmos parâmetros = mesma imagem."
+      "Seed for reproducibility. Same seed + same parameters = same image."
     ),
 
   response_format: z
     .enum(RESPONSE_FORMATS)
     .default(DEFAULT_RESPONSE_FORMAT)
     .describe(
-      "Formato de resposta. 'base64' para persistência (recomendado), 'url' expira em 24h."
+      "Response format. 'base64' for persistence (recommended), 'url' expires in 24h."
     ),
 
   prompt_optimizer: z
     .boolean()
     .default(false)
     .describe(
-      "Ativa otimização automática do prompt. Pode adicionar elementos extras."
+      "Enable automatic prompt optimization. May add extra elements."
     ),
 
   subject_reference: z
     .array(
       z.object({
         type: z.literal("character"),
-        image_file: z.string().url("URL da imagem inválida"),
+        image_file: z.string().url("Invalid image URL"),
       })
     )
-    .min(1, "Mínimo 1 imagem de referência")
-    .max(5, "Máximo 5 imagens de referência")
+    .min(1, "Minimum 1 reference image")
+    .max(5, "Maximum 5 reference images")
     .optional()
     .describe(
-      "Imagens de referência para Image-to-Image. Mantém identidade visual do personagem."
+      "Reference images for Image-to-Image. Maintains visual identity of the character."
     ),
 
   output_dir: z
     .string()
     .optional()
     .describe(
-      "Diretório para salvar imagens. Padrão: ./output/ ou MINIMAX_OUTPUT_DIR"
+      "Directory to save images. Must be within the working directory or MINIMAX_OUTPUT_DIR. Default: ./output/"
     ),
 });
 

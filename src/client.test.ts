@@ -15,6 +15,7 @@ import {
   MAX_BACKOFF_MS,
   RETRY_DELAY_1002_MS,
   RETRY_DELAY_2045_MS,
+  BODY_READ_TIMEOUT_MS,
 } from "./constants.js";
 
 function buildSuccessResponse(imageB64s: string[] = ["aGVsbG8="]): Response {
@@ -267,5 +268,20 @@ describe("MiniMaxClient.generateImage", () => {
     const init = call![1] as RequestInit;
     const headers = init.headers as Record<string, string>;
     expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  it("sets a body read timeout on the response text", async () => {
+    fetchMock.mockResolvedValueOnce(buildSuccessResponse());
+    const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+
+    const client = new MiniMaxClient("test-key");
+    await client.generateImage({ prompt: "a cat" });
+
+    const timeoutCalls = setTimeoutSpy.mock.calls.filter(
+      ([, delay]) => delay === BODY_READ_TIMEOUT_MS,
+    );
+    expect(timeoutCalls.length).toBeGreaterThanOrEqual(1);
+
+    setTimeoutSpy.mockRestore();
   });
 });
