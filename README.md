@@ -579,6 +579,7 @@ If you want to build something similar with MiniMax M3, see the [MCP](https://mo
 - [Model Context Protocol](https://modelcontextprotocol.io) — the open protocol that makes this server possible
 - [MiniMax](https://api.minimax.io) — the image generation API
 - [MiniMax](https://minimax.com) — the AI model and the company behind it
+- [OpenCode](https://github.com/anomalyco/opencode) — the AI-powered CLI tool used to build, test, and maintain this project
 - [@modelcontextprotocol/typescript-sdk](https://github.com/modelcontextprotocol/typescript-sdk) — the SDK this server is built on
 - [AWS Architecture Blog — Exponential Backoff and Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/) — the canonical reference for the retry algorithm used here
 - [Zod](https://zod.dev) — runtime validation
