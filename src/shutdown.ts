@@ -8,10 +8,11 @@ export function installShutdownHandlers(server: McpServer): void {
     console.error(`Received ${signal}, shutting down...`);
     try {
       await server.close();
+      process.exit(0);
     } catch (err) {
       console.error("Error during server.close():", err);
+      process.exit(1);
     }
-    process.exit(0);
   };
 
   process.on("SIGINT", () => {
