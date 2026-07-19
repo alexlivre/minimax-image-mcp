@@ -561,7 +561,7 @@ Contributions are welcome! See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the wo
 
 ## License
 
-[MIT](./LICENSE) © 2026 Alex Breno
+[MIT](./LICENSE) © 2026 [Alex Santos](https://alexlivre.dev/) ([@alexlivre](https://github.com/alexlivre))
 
 ## Built with
 

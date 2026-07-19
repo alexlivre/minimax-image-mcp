@@ -1,6 +1,6 @@
 {
   "name": "minimax-image-mcp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "MCP server for MiniMax image generation API",
   "type": "module",
   "main": "dist/index.js",
