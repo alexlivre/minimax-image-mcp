@@ -15,10 +15,10 @@ export default defineConfig({
       "src/shutdown.ts",
     ],
     thresholds: {
-      lines: 85,
+      lines: 90,
       functions: 85,
-      branches: 80,
-      statements: 85,
+      branches: 85,
+      statements: 90,
     },
   },
 });
