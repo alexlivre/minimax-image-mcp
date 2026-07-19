@@ -99,6 +99,17 @@ describe("MiniMaxClient.generateImage", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("throws MiniMaxApiError with isFatal=true on fatal status code (1008), no retry", async () => {
+    fetchMock.mockResolvedValueOnce(
+      buildErrorResponse(1008, "Insufficient balance"),
+    );
+    const client = new MiniMaxClient("test-key");
+    await expect(
+      client.generateImage({ prompt: "a cat" }),
+    ).rejects.toBeInstanceOf(MiniMaxApiError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("retries on 1002 then succeeds; uses 60s delay between attempts", async () => {
     fetchMock
       .mockResolvedValueOnce(buildErrorResponse(1002, "rate limit"))
@@ -270,18 +281,18 @@ describe("MiniMaxClient.generateImage", () => {
     expect(headers["Content-Type"]).toBe("application/json");
   });
 
-  it("sets a body read timeout on the response text", async () => {
+  it("sets a body read timeout via AbortSignal.timeout", async () => {
     fetchMock.mockResolvedValueOnce(buildSuccessResponse());
-    const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+    const abortTimeoutSpy = vi.spyOn(AbortSignal, "timeout");
 
     const client = new MiniMaxClient("test-key");
     await client.generateImage({ prompt: "a cat" });
 
-    const timeoutCalls = setTimeoutSpy.mock.calls.filter(
-      ([, delay]) => delay === BODY_READ_TIMEOUT_MS,
+    const timeoutCalls = abortTimeoutSpy.mock.calls.filter(
+      ([delay]) => delay === BODY_READ_TIMEOUT_MS,
     );
     expect(timeoutCalls.length).toBeGreaterThanOrEqual(1);
 
-    setTimeoutSpy.mockRestore();
+    abortTimeoutSpy.mockRestore();
   });
 });

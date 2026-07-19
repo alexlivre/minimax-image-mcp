@@ -52,13 +52,15 @@ export class MiniMaxClient {
         });
 
         const bodyPromise = response.text();
-        const bodyTimeout = new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Response body read timed out")),
-            BODY_READ_TIMEOUT_MS,
-          ),
-        );
-        const raw = await Promise.race([bodyPromise, bodyTimeout]);
+        const bodyTimeoutSignal = AbortSignal.timeout(BODY_READ_TIMEOUT_MS);
+        const raw = await Promise.race([
+          bodyPromise,
+          new Promise<never>((_, reject) => {
+            bodyTimeoutSignal.addEventListener("abort", () => {
+              reject(new Error("Response body read timed out"));
+            }, { once: true });
+          }),
+        ]);
         const data = ImageGenerateResponseSchema.parse(JSON.parse(raw));
         const statusCode = data.base_resp?.status_code;
 
