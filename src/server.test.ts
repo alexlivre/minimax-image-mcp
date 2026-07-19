@@ -3,11 +3,12 @@ import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const { registerToolMock, McpServerMock, saveImageMock } = vi.hoisted(() => {
+const { registerToolMock, McpServerMock, saveImageMock, downloadImageFromUrlMock } = vi.hoisted(() => {
   const registerToolMock = vi.fn();
   const McpServerMock = vi.fn(() => ({ registerTool: registerToolMock }));
   const saveImageMock = vi.fn();
-  return { registerToolMock, McpServerMock, saveImageMock };
+  const downloadImageFromUrlMock = vi.fn();
+  return { registerToolMock, McpServerMock, saveImageMock, downloadImageFromUrlMock };
 });
 
 vi.mock("@modelcontextprotocol/sdk/server/mcp.js", () => ({
@@ -19,6 +20,7 @@ vi.mock("./utils.js", async (importOriginal) => {
   return {
     ...actual,
     saveImage: saveImageMock,
+    downloadImageFromUrl: downloadImageFromUrlMock,
   };
 });
 
@@ -62,6 +64,7 @@ type SuccessResponse = Awaited<ReturnType<MiniMaxClient["generateImage"]>>;
 function buildExtra(overrides: {
   progressToken?: string | number;
   sendNotification?: ReturnType<typeof vi.fn>;
+  signal?: AbortSignal;
 } = {}): RequestHandlerExtra<ServerRequest, ServerNotification> {
   const sendNotification =
     overrides.sendNotification ?? vi.fn().mockResolvedValue(undefined);
@@ -70,7 +73,7 @@ function buildExtra(overrides: {
       ? { progressToken: overrides.progressToken }
       : undefined;
   return {
-    signal: new AbortController().signal,
+    signal: overrides.signal ?? new AbortController().signal,
     _meta: meta,
     requestId: 1,
     sendNotification,
@@ -116,6 +119,11 @@ describe("createServer", () => {
     saveImageMock.mockImplementation(
       async (_data: string, _prompt: string, dir: string, idx: number) =>
         join(dir, `fake-${idx}.jpeg`),
+    );
+
+    downloadImageFromUrlMock.mockReset();
+    downloadImageFromUrlMock.mockResolvedValue(
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
     );
 
     createServer(client);
@@ -346,5 +354,40 @@ describe("createServer", () => {
     expect(result).toBeDefined();
     expect(result.isError).toBeUndefined();
     expect(sendNotification).toHaveBeenCalled();
+  });
+
+  it("returns isError when abort signal fires before save completes", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    vi.spyOn(client, "generateImage").mockResolvedValue(
+      successResponse(["aGVsbG8="]),
+    );
+
+    const result = (await toolCallback(
+      { prompt: "a cat", output_dir: tmpDir },
+      buildExtra({ signal: controller.signal }),
+    )) as CallToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/cancel/i);
+  });
+
+  it("saves images from URLs when API returns image_urls", async () => {
+    vi.spyOn(client, "generateImage").mockResolvedValue({
+      id: "resp-url",
+      data: { image_urls: ["https://example.com/a.jpg"] },
+      metadata: { failed_count: "0", success_count: "1" },
+      base_resp: { status_code: 0, status_msg: "" },
+    });
+
+    const result = (await toolCallback(
+      { prompt: "a cat", output_dir: tmpDir, response_format: "url" },
+      buildExtra(),
+    )) as CallToolResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toMatch(/Generated 1 image/);
+    expect(downloadImageFromUrlMock).toHaveBeenCalledWith("https://example.com/a.jpg");
   });
 });
