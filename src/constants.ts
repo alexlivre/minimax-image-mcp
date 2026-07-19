@@ -8,6 +8,7 @@ export const MAX_IMAGES_PER_REQUEST = 9;
 export const MAX_BACKOFF_MS = 30000;
 export const DEFAULT_TIMEOUT_MS = 60000;
 export const BODY_READ_TIMEOUT_MS = 10000;
+export const DOWNLOAD_TIMEOUT_MS = 30000;
 
 // Aspect Ratios
 export const ASPECT_RATIOS = [
@@ -26,7 +27,7 @@ export type ResponseFormat = typeof RESPONSE_FORMATS[number];
 
 // Error codes
 export const RETRYABLE_ERRORS = [1002, 2045];
-export const FATAL_ERRORS = [1004, 2049, 2056, 1026, 1027];
+export const FATAL_ERRORS = [1004, 1008, 2049, 2056, 1026, 1027];
 
 export const ERROR_MESSAGES: Record<number, string> = {
   1002: "Rate limit exceeded. Wait 60s and retry.",
