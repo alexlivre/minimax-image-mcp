@@ -13,6 +13,7 @@ import {
   resolveOutputDir,
   sanitizeFilename,
   isValidImage,
+  detectImageExtension,
   saveImage,
   downloadImageFromUrl,
   readPackageMetadata,
@@ -22,6 +23,10 @@ const IS_WINDOWS = platform === "win32";
 const OUTSIDE_ABS_PATH = IS_WINDOWS ? "C:\\Windows" : "/etc";
 const JPEG_MAGIC = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01];
 const VALID_JPEG_B64 = Buffer.from(JPEG_MAGIC).toString("base64");
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d];
+const VALID_PNG_B64 = Buffer.from(PNG_MAGIC).toString("base64");
+const WEBP_MAGIC = [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50];
+const VALID_WEBP_B64 = Buffer.from(WEBP_MAGIC).toString("base64");
 
 describe("resolveOutputDir", () => {
   const originalEnv = process.env.MINIMAX_OUTPUT_DIR;
@@ -150,6 +155,28 @@ describe("isValidImage", () => {
   });
 });
 
+describe("detectImageExtension", () => {
+  it("returns .jpeg for JPEG magic bytes", () => {
+    const buf = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+    expect(detectImageExtension(buf)).toBe(".jpeg");
+  });
+
+  it("returns .png for PNG magic bytes", () => {
+    const buf = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+    expect(detectImageExtension(buf)).toBe(".png");
+  });
+
+  it("returns .webp for WebP (RIFF) magic bytes", () => {
+    const buf = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00]);
+    expect(detectImageExtension(buf)).toBe(".webp");
+  });
+
+  it("defaults to .jpeg for unknown format", () => {
+    const buf = Buffer.from([0x00, 0x01, 0x02, 0x03]);
+    expect(detectImageExtension(buf)).toBe(".jpeg");
+  });
+});
+
 describe("saveImage", () => {
   let tempDir: string;
 
@@ -204,9 +231,19 @@ describe("saveImage", () => {
     expect(existsSync(b)).toBe(true);
   });
 
-  it("writes a jpeg file", async () => {
+  it("writes a jpeg file for JPEG data", async () => {
     const filepath = await saveImage(VALID_JPEG_B64, "cat", tempDir, 0);
     expect(filepath.endsWith(".jpeg")).toBe(true);
+  });
+
+  it("writes a png file for PNG data", async () => {
+    const filepath = await saveImage(VALID_PNG_B64, "cat", tempDir, 0);
+    expect(filepath.endsWith(".png")).toBe(true);
+  });
+
+  it("writes a webp file for WebP data", async () => {
+    const filepath = await saveImage(VALID_WEBP_B64, "cat", tempDir, 0);
+    expect(filepath.endsWith(".webp")).toBe(true);
   });
 });
 
@@ -249,6 +286,25 @@ describe("downloadImageFromUrl", () => {
 
     await expect(downloadImageFromUrl("https://example.com/text.txt"))
       .rejects.toThrow(/Downloaded data from URL is not a valid image/);
+  });
+
+  it("throws when download times out", async () => {
+    const controller = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        }, { once: true });
+      });
+    });
+
+    const promise = downloadImageFromUrl("https://example.com/slow.jpg");
+
+    controller.abort();
+
+    await expect(promise).rejects.toThrow();
   });
 });
 

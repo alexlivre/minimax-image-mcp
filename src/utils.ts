@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { DOWNLOAD_TIMEOUT_MS } from "./constants.js";
+
 export const DEFAULT_OUTPUT_DIR = "./output";
 
 export function resolveOutputDir(dir?: string): string {
@@ -33,15 +35,24 @@ export function sanitizeFilename(prompt: string, maxLength = 50): string {
   );
 }
 
-const IMAGE_MAGIC_BYTES: ReadonlyArray<readonly number[]> = [
-  [0xff, 0xd8, 0xff],
-  [0x89, 0x50, 0x4e, 0x47],
-  [0x52, 0x49, 0x46, 0x46],
+const FORMAT_SIGNATURES: ReadonlyArray<{ magic: readonly number[]; ext: string }> = [
+  { magic: [0xff, 0xd8, 0xff], ext: ".jpeg" },
+  { magic: [0x89, 0x50, 0x4e, 0x47], ext: ".png" },
+  { magic: [0x52, 0x49, 0x46, 0x46], ext: ".webp" },
 ];
+
+export function detectImageExtension(buffer: Buffer): string {
+  for (const { magic, ext } of FORMAT_SIGNATURES) {
+    if (magic.every((byte, i) => buffer[i] === byte)) {
+      return ext;
+    }
+  }
+  return ".jpeg";
+}
 
 export function isValidImage(buffer: Buffer): boolean {
   if (buffer.length < 4) return false;
-  return IMAGE_MAGIC_BYTES.some((magic) =>
+  return FORMAT_SIGNATURES.some(({ magic }) =>
     magic.every((byte, i) => buffer[i] === byte),
   );
 }
@@ -55,8 +66,6 @@ export async function saveImage(
   const timestamp = Date.now();
   const slug = sanitizeFilename(prompt);
   const suffix = randomUUID().slice(0, 8);
-  const filename = `${slug}-${timestamp}-${index + 1}-${suffix}.jpeg`;
-  const filepath = join(outputDir, filename);
 
   const buffer = Buffer.from(base64Data, "base64");
 
@@ -66,13 +75,19 @@ export async function saveImage(
     );
   }
 
+  const extension = detectImageExtension(buffer);
+  const filename = `${slug}-${timestamp}-${index + 1}-${suffix}${extension}`;
+  const filepath = join(outputDir, filename);
+
   await writeFile(filepath, buffer);
 
   return filepath;
 }
 
 export async function downloadImageFromUrl(url: string): Promise<Buffer> {
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(
       `Failed to download image from URL: ${response.status} ${response.statusText}`
