@@ -69,7 +69,7 @@ export const ImageGenerateSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Directory to save images. Must be within the working directory or MINIMAX_OUTPUT_DIR. Default: ./output/"
+      "Directory to save images. Absolute paths are accepted (use the workspace path to save in the project). Relative paths must stay under the process cwd. Default: ./output/"
     ),
 });
 

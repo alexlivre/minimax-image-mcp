@@ -38,7 +38,7 @@ Flow: `index.ts` → `createServer(client)` → `server.connect(StdioServerTrans
 - **API endpoint:** `POST https://api.minimax.io/v1/image_generation`
 - **Model:** `image-01` (hardcoded in `constants.ts`)
 - **Transport:** stdio (not HTTP)
-- **Images saved to:** `./output/` by default (override via `output_dir` param or `MINIMAX_OUTPUT_DIR` env)
+- **Images saved to:** `./output/` by default (relative to MCP process cwd). Pass absolute `output_dir` for the workspace. Optional: `MINIMAX_OUTPUT_DIR`, `MINIMAX_ALLOWED_OUTPUT_ROOTS`
 - **Rate limit:** 10 RPM official, but real bottleneck is ~16s latency per request
 - **Retry:** errors 1002 (60s backoff) and 2045 (30s backoff) are retried automatically; 1004/2049/2056/1026/1027 are fatal
 

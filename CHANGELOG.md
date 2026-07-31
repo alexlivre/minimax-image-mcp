@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-07-31
+
+### Fixed
+
+- **utils:** Accept absolute `output_dir` paths so agents can save images directly into the open workspace (Cursor MCP `cwd` is not the project root). Relative paths remain sandboxed to the process cwd.
+- **utils:** Optional `MINIMAX_ALLOWED_OUTPUT_ROOTS` for locking writes to configured roots.
+
+### Changed
+
+- MCP instructions and docs now tell agents to pass an absolute workspace path for `output_dir` instead of copying files afterward.
+
+### Added
+
+- GitHub Actions `publish.yml` for npm Trusted Publishing (OIDC)
+
 ## [1.0.3] - 2026-07-19
 
 ### Fixed
