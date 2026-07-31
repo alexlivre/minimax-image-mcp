@@ -314,7 +314,8 @@ You can also optionally set:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `MINIMAX_OUTPUT_DIR` | `./output` | Base directory for saved images. The `output_dir` tool parameter is resolved relative to this (or, if absolute, must be inside this path). |
+| `MINIMAX_OUTPUT_DIR` | `./output` | Default directory when the tool omits `output_dir`. Absolute or relative (relative must stay under process cwd). |
+| `MINIMAX_ALLOWED_OUTPUT_ROOTS` | — | Optional lockdown: delimiter-separated roots (`;` on Windows, `:` on Unix). When set, every resolved `output_dir` must be under one of these roots. |
 
 For ready-to-use client configuration snippets (opencode, Claude Desktop, Cursor, VS Code) — including cross-platform paths for the **npm-installed** binary — see [Using via npm](#using-via-npm).
 
@@ -387,7 +388,7 @@ Running this twice with the same seed produces the same 4 images.
 | `response_format` | enum | ❌ | `base64` | `base64` or `url` | `base64` recommended; URLs expire in 24h |
 | `prompt_optimizer` | boolean | ❌ | `false` | — | Server-side prompt rewrite |
 | `subject_reference` | array | ❌ | — | 1–5 items | Character reference image URLs (HTTPS) |
-| `output_dir` | string | ❌ | `./output` | absolute path inside `MINIMAX_OUTPUT_DIR` or `cwd` | Where to save the generated files |
+| `output_dir` | string | ❌ | `./output` | absolute path accepted; relative must stay under process cwd | Where to save the generated files. Pass an absolute workspace path to save in the project. |
 
 **Output schema** (`ImageGenerateOutputSchema`):
 
@@ -546,7 +547,7 @@ See [`SECURITY.md`](./SECURITY.md) for:
 
 - Never commit your API key. The `.gitignore` covers `apikey.txt` and `.env`, but always double-check before `git add`.
 - Use environment variables, not hardcoded values, in your MCP client config.
-- The server rejects `output_dir` paths outside `cwd` (or `MINIMAX_OUTPUT_DIR`) to prevent accidental writes to system locations.
+- Absolute `output_dir` is accepted (so agents can save into the open workspace). Relative paths must stay under the process cwd. Optional `MINIMAX_ALLOWED_OUTPUT_ROOTS` restricts all writes.
 - Rotate your API key if you suspect it has been exposed.
 
 ## Contributing

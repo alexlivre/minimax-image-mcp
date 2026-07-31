@@ -1,26 +1,56 @@
 import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { join, resolve, sep } from "node:path";
+import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { DOWNLOAD_TIMEOUT_MS } from "./constants.js";
 
 export const DEFAULT_OUTPUT_DIR = "./output";
 
+/** True when `child` is `parent` or a path under `parent`. */
+export function isPathInside(child: string, parent: string): boolean {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function parseAllowedRoots(): string[] | null {
+  const raw = process.env.MINIMAX_ALLOWED_OUTPUT_ROOTS?.trim();
+  if (!raw) return null;
+  const roots = raw
+    .split(delimiter)
+    .map((r) => r.trim())
+    .filter(Boolean)
+    .map((r) => resolve(r));
+  return roots.length > 0 ? roots : null;
+}
+
+function outsideAllowedError(resolved: string, allowed: string): Error {
+  return new Error(
+    `output_dir outside allowed directory: ${resolved}\nAllowed: ${allowed}\n` +
+      `Pass an absolute workspace path, or set MINIMAX_ALLOWED_OUTPUT_ROOTS.`,
+  );
+}
+
 export function resolveOutputDir(dir?: string): string {
   const requested = dir || process.env.MINIMAX_OUTPUT_DIR || DEFAULT_OUTPUT_DIR;
   const resolved = resolve(requested);
-  const cwd = process.cwd();
-  const envBase = process.env.MINIMAX_OUTPUT_DIR
-    ? resolve(process.env.MINIMAX_OUTPUT_DIR)
-    : null;
-  const allowed = envBase ?? cwd;
+  const allowedRoots = parseAllowedRoots();
 
-  if (resolved !== allowed && !resolved.startsWith(allowed + sep)) {
-    throw new Error(
-      `output_dir outside allowed directory: ${resolved}\nAllowed: ${allowed}`
-    );
+  if (allowedRoots) {
+    if (!allowedRoots.some((root) => isPathInside(resolved, root))) {
+      throw outsideAllowedError(resolved, allowedRoots.join(delimiter));
+    }
+    return resolved;
+  }
+
+  if (isAbsolute(requested)) {
+    return resolved;
+  }
+
+  const cwd = process.cwd();
+  if (!isPathInside(resolved, cwd)) {
+    throw outsideAllowedError(resolved, cwd);
   }
   return resolved;
 }

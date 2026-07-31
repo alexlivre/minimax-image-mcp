@@ -44,7 +44,7 @@ This MCP server is a **thin client** to the MiniMax image generation API. The se
 ### Trust Boundaries
 
 - **API key (`MINIMAX_API_KEY`)** — Bearer token. Treated as a secret; never logged, never written to disk, never returned in error messages. Loaded only from environment variables.
-- **Output directory** — server writes JPEG files to `output_dir` (default `./output/`). The path is validated to prevent traversal outside the working directory (or `MINIMAX_OUTPUT_DIR` base).
+- **Output directory** — server writes image files to `output_dir` (default `./output/`). Absolute paths are accepted. Relative paths must stay under the process cwd. Optional `MINIMAX_ALLOWED_OUTPUT_ROOTS` restricts all writes to listed roots.
 - **Stdout** — used **only** for MCP protocol frames. Stderr is used for diagnostic logs. Never write secrets to either.
 - **Network** — only outbound HTTPS to `api.minimax.io`. No inbound network.
 
@@ -60,7 +60,7 @@ This MCP server is a **thin client** to the MiniMax image generation API. The se
 
 1. **Never commit your API key.** The `.gitignore` covers `apikey.txt` and `.env`, but always double-check before `git add`.
 2. **Use environment variables**, not hardcoded values, when configuring the MCP client.
-3. **Restrict `output_dir`** to a directory you control. The server rejects paths outside `cwd` (or `MINIMAX_OUTPUT_DIR`) to prevent accidental writes to system locations.
+3. **Restrict writes if needed** with `MINIMAX_ALLOWED_OUTPUT_ROOTS` (delimiter-separated roots). Relative `output_dir` values are already sandboxed to the process cwd; absolute paths are accepted by default so agents can save into the open workspace.
 4. **Rotate your API key** if you suspect it has been exposed. The MiniMax dashboard allows key revocation.
 5. **Run on trusted hosts only.** This server has full filesystem write access to `output_dir` on the host it runs on.
 6. **Review `subject_reference` URLs** before passing them — they must be HTTPS URLs to image files. The server does not fetch them, but the upstream API does.

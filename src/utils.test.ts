@@ -6,11 +6,12 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { delimiter, join, resolve, sep } from "node:path";
 import { platform } from "node:process";
 import {
   DEFAULT_OUTPUT_DIR,
   resolveOutputDir,
+  isPathInside,
   sanitizeFilename,
   isValidImage,
   detectImageExtension,
@@ -28,12 +29,31 @@ const VALID_PNG_B64 = Buffer.from(PNG_MAGIC).toString("base64");
 const WEBP_MAGIC = [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50];
 const VALID_WEBP_B64 = Buffer.from(WEBP_MAGIC).toString("base64");
 
+describe("isPathInside", () => {
+  it("returns true for the same path", () => {
+    const dir = resolve(".");
+    expect(isPathInside(dir, dir)).toBe(true);
+  });
+
+  it("returns true for a nested child", () => {
+    expect(isPathInside(join(resolve("."), "a", "b"), resolve("."))).toBe(true);
+  });
+
+  it("returns false for a sibling path that only shares a prefix", () => {
+    const parent = join(tmpdir(), "allowed-root");
+    const sibling = join(tmpdir(), "allowed-root-extra");
+    expect(isPathInside(sibling, parent)).toBe(false);
+  });
+});
+
 describe("resolveOutputDir", () => {
   const originalEnv = process.env.MINIMAX_OUTPUT_DIR;
+  const originalRoots = process.env.MINIMAX_ALLOWED_OUTPUT_ROOTS;
   let cwd: string;
 
   beforeEach(() => {
     delete process.env.MINIMAX_OUTPUT_DIR;
+    delete process.env.MINIMAX_ALLOWED_OUTPUT_ROOTS;
     cwd = process.cwd();
   });
 
@@ -42,6 +62,11 @@ describe("resolveOutputDir", () => {
       delete process.env.MINIMAX_OUTPUT_DIR;
     } else {
       process.env.MINIMAX_OUTPUT_DIR = originalEnv;
+    }
+    if (originalRoots === undefined) {
+      delete process.env.MINIMAX_ALLOWED_OUTPUT_ROOTS;
+    } else {
+      process.env.MINIMAX_ALLOWED_OUTPUT_ROOTS = originalRoots;
     }
   });
 
@@ -65,13 +90,11 @@ describe("resolveOutputDir", () => {
     expect(() => resolveOutputDir("../..")).toThrow(/outside allowed directory/);
   });
 
-  it("throws for absolute path outside cwd", () => {
-    expect(() => resolveOutputDir(OUTSIDE_ABS_PATH)).toThrow(
-      /outside allowed directory/,
-    );
+  it("accepts absolute path outside cwd", () => {
+    expect(resolveOutputDir(OUTSIDE_ABS_PATH)).toBe(resolve(OUTSIDE_ABS_PATH));
   });
 
-  it("accepts absolute MINIMAX_OUTPUT_DIR as override", () => {
+  it("accepts absolute MINIMAX_OUTPUT_DIR as default", () => {
     process.env.MINIMAX_OUTPUT_DIR = OUTSIDE_ABS_PATH;
     expect(resolveOutputDir()).toBe(resolve(OUTSIDE_ABS_PATH));
   });
@@ -82,11 +105,48 @@ describe("resolveOutputDir", () => {
     );
   });
 
-  it("explicit dir argument still throws if outside cwd", () => {
+  it("relative escape still throws when MINIMAX_OUTPUT_DIR is set", () => {
     process.env.MINIMAX_OUTPUT_DIR = "./allowed";
     expect(() => resolveOutputDir("../escape")).toThrow(
       /outside allowed directory/,
     );
+  });
+
+  it("accepts absolute path under MINIMAX_ALLOWED_OUTPUT_ROOTS", () => {
+    const root = mkdtempSync(join(tmpdir(), "minimax-allowed-"));
+    try {
+      process.env.MINIMAX_ALLOWED_OUTPUT_ROOTS = root;
+      const nested = join(root, "images");
+      expect(resolveOutputDir(nested)).toBe(resolve(nested));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects absolute path outside MINIMAX_ALLOWED_OUTPUT_ROOTS", () => {
+    const root = mkdtempSync(join(tmpdir(), "minimax-allowed-"));
+    try {
+      process.env.MINIMAX_ALLOWED_OUTPUT_ROOTS = root;
+      expect(() => resolveOutputDir(OUTSIDE_ABS_PATH)).toThrow(
+        /outside allowed directory/,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("supports multiple roots separated by path.delimiter", () => {
+    const rootA = mkdtempSync(join(tmpdir(), "minimax-a-"));
+    const rootB = mkdtempSync(join(tmpdir(), "minimax-b-"));
+    try {
+      process.env.MINIMAX_ALLOWED_OUTPUT_ROOTS = `${rootA}${delimiter}${rootB}`;
+      expect(resolveOutputDir(join(rootB, "out"))).toBe(
+        resolve(join(rootB, "out")),
+      );
+    } finally {
+      rmSync(rootA, { recursive: true, force: true });
+      rmSync(rootB, { recursive: true, force: true });
+    }
   });
 });
 
