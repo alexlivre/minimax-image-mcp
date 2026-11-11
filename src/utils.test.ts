@@ -4,6 +4,7 @@ import {
   readFileSync,
   existsSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve, sep } from "node:path";
@@ -17,11 +18,13 @@ import {
   detectImageExtension,
   saveImage,
   downloadImageFromUrl,
+  resolveReferenceImage,
   readPackageMetadata,
 } from "./utils.js";
 import {
   DOWNLOAD_TIMEOUT_MS,
   MAX_DOWNLOAD_BYTES,
+  MAX_REFERENCE_BYTES,
 } from "./constants.js";
 import {
   RequestCancelledError,
@@ -317,6 +320,99 @@ describe("saveImage", () => {
     const saved = await saveImage(VALID_WEBP_B64, "cat", tempDir, 0);
     expect(saved.path.endsWith(".webp")).toBe(true);
     expect(saved.mimeType).toBe("image/webp");
+  });
+});
+
+describe("resolveReferenceImage", () => {
+  let tempDir: string;
+  const originalRoots = process.env.MINIMAX_ALLOWED_REFERENCE_ROOTS;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "minimax-ref-"));
+    delete process.env.MINIMAX_ALLOWED_REFERENCE_ROOTS;
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalRoots === undefined) {
+      delete process.env.MINIMAX_ALLOWED_REFERENCE_ROOTS;
+    } else {
+      process.env.MINIMAX_ALLOWED_REFERENCE_ROOTS = originalRoots;
+    }
+  });
+
+  function writeReference(name: string, buffer: Buffer): string {
+    const path = join(tempDir, name);
+    writeFileSync(path, buffer);
+    return path;
+  }
+
+  it("returns public http(s) URLs unchanged", async () => {
+    const url = "https://example.com/reference.png";
+    await expect(resolveReferenceImage(url)).resolves.toBe(url);
+  });
+
+  it("returns data URLs unchanged", async () => {
+    const dataUrl = "data:image/png;base64,aGVsbG8=";
+    await expect(resolveReferenceImage(dataUrl)).resolves.toBe(dataUrl);
+  });
+
+  it("converts a local JPEG to a data URL", async () => {
+    const path = writeReference("reference.jpg", Buffer.from(JPEG_MAGIC));
+    const result = await resolveReferenceImage(path);
+    expect(result.startsWith("data:image/jpeg;base64,")).toBe(true);
+    const decoded = Buffer.from(result.split(",")[1] ?? "", "base64");
+    expect(decoded.equals(Buffer.from(JPEG_MAGIC))).toBe(true);
+  });
+
+  it("converts a local PNG to a data URL", async () => {
+    const path = writeReference("reference.png", Buffer.from(PNG_MAGIC));
+    const result = await resolveReferenceImage(path);
+    expect(result.startsWith("data:image/png;base64,")).toBe(true);
+  });
+
+  it("rejects a missing file", async () => {
+    await expect(resolveReferenceImage(join(tempDir, "missing.png")))
+      .rejects.toThrow(/not found/);
+  });
+
+  it("rejects a non-image file", async () => {
+    const path = writeReference("reference.png", Buffer.from("not an image"));
+    await expect(resolveReferenceImage(path)).rejects.toThrow(/not a valid image/);
+  });
+
+  it("rejects WebP because the API only supports JPEG/PNG", async () => {
+    const path = writeReference("reference.webp", Buffer.from(WEBP_MAGIC));
+    await expect(resolveReferenceImage(path)).rejects.toThrow(/must be JPEG or PNG/);
+  });
+
+  it("rejects files larger than the 10 MB limit", async () => {
+    const path = writeReference(
+      "large.png",
+      Buffer.alloc(MAX_REFERENCE_BYTES + 1),
+    );
+    await expect(resolveReferenceImage(path)).rejects.toThrow(/exceeds/);
+  });
+
+  it("rejects relative paths outside the cwd", async () => {
+    await expect(resolveReferenceImage("../escape.png"))
+      .rejects.toThrow(/outside allowed directory/);
+  });
+
+  it("honors MINIMAX_ALLOWED_REFERENCE_ROOTS", async () => {
+    process.env.MINIMAX_ALLOWED_REFERENCE_ROOTS = tempDir;
+    const inside = writeReference("reference.png", Buffer.from(PNG_MAGIC));
+    await expect(resolveReferenceImage(inside)).resolves.toMatch(/^data:image\/png/);
+    await expect(resolveReferenceImage(join(tmpdir(), "outside-reference.png")))
+      .rejects.toThrow(/outside allowed directory/);
+  });
+
+  it("rejects when the caller signal is already aborted", async () => {
+    const path = writeReference("reference.png", Buffer.from(PNG_MAGIC));
+    const controller = new AbortController();
+    controller.abort();
+    await expect(resolveReferenceImage(path, controller.signal))
+      .rejects.toBeInstanceOf(RequestCancelledError);
   });
 });
 

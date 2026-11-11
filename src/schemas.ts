@@ -16,17 +16,24 @@ import {
   RESPONSE_FORMATS,
 } from "./constants.js";
 
+const WINDOWS_DRIVE_PATH = /^[a-z]:[\\/]/i;
+const URI_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
 function isValidReferenceSource(value: string): boolean {
   if (/^https?:\/\/\S+$/i.test(value)) return true;
 
-  const match = /^data:image\/(?:jpeg|jpg|png);base64,([A-Za-z0-9+/=]+)$/i.exec(value);
-  if (!match) return false;
+  const dataUrl = /^data:image\/(?:jpeg|jpg|png);base64,([A-Za-z0-9+/=]+)$/i.exec(value);
+  if (dataUrl) {
+    const payload = dataUrl[1] ?? "";
+    const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+    const bytes = Math.floor((payload.length * 3) / 4) - padding;
+    return bytes > 0 && bytes <= MAX_REFERENCE_BYTES;
+  }
 
-  const payload = match[1] ?? "";
-  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
-  const bytes = Math.floor((payload.length * 3) / 4) - padding;
+  if (URI_SCHEME.test(value) && !WINDOWS_DRIVE_PATH.test(value)) return false;
+  if (value.includes("\0")) return false;
 
-  return bytes > 0 && bytes <= MAX_REFERENCE_BYTES;
+  return /\.(?:jpe?g|png)$/i.test(value);
 }
 
 const referenceImageSchema = z.object({
@@ -35,7 +42,7 @@ const referenceImageSchema = z.object({
     .string()
     .refine(
       isValidReferenceSource,
-      "Must be a public http(s) URL or a base64 data URL (image/jpeg or image/png) under 10 MB",
+      "Must be a public http(s) URL, a base64 data URL (image/jpeg or image/png), or a local JPEG/PNG file path",
     ),
 });
 
@@ -130,7 +137,7 @@ export const ImageGenerateSchemaBase = z.object({
     .max(MAX_REFERENCE_IMAGES, `Maximum ${MAX_REFERENCE_IMAGES} reference image per request`)
     .optional()
     .describe(
-      "Single character reference image for image-to-image. Accepts a public HTTPS URL or a base64 data URL (image/jpeg or image/png, under 10 MB)."
+      "Single character reference image for image-to-image. Accepts a public HTTPS URL, a base64 data URL (image/jpeg or image/png, under 10 MB), or a local JPEG/PNG file path. Pass an absolute path for files in the workspace."
     ),
 
   output_dir: z

@@ -44,6 +44,7 @@ If you use an MCP-aware LLM client and want to generate images from natural-lang
 - Validates every input with **Zod** before calling the API
 - Handles **retry with exponential backoff and AWS-style full jitter** for transient errors
 - Saves generated images to a directory you control, with a **configurable output-directory guard**: relative paths must stay under the process cwd, absolute paths are accepted by design, and `MINIMAX_ALLOWED_OUTPUT_ROOTS` can lock writes to an allowlist
+- Reads local reference images only when explicitly passed in `subject_reference`, validates JPEG/PNG magic bytes and the 10 MB limit, and supports `MINIMAX_ALLOWED_REFERENCE_ROOTS` for read lockdowns
 - Returns a **structured output** (typed, machine-readable) so LLM clients can chain tool calls reliably
 - Sends optional **progress notifications** for long-running requests
 - Exits **cleanly on SIGINT/SIGTERM**
@@ -56,7 +57,7 @@ If you use an MCP-aware LLM client and want to generate images from natural-lang
 - **Explicit dimensions** — `width`/`height` (512–2048 px, divisible by 8) when exact pixels matter
 - **Two models** — `image-01` (text-to-image and image-to-image) and `image-01-live` (character consistency)
 - **Seed-based reproducibility** — same prompt + same seed ⇒ same image
-- **Image-to-image with a character reference** — one reference image as a public URL or base64 data URL
+- **Image-to-image with a character reference** — one reference image as a public URL, base64 data URL, or local JPEG/PNG path
 - **Prompt optimization** — optional auto-rewriting of the prompt server-side
 - **Response formats** — `base64` (recommended, persistent) or `url` (expires in 24h)
 - **Inline image blocks** — results include MCP `image` content by default (`inline_images`)
@@ -102,7 +103,7 @@ npm install -g minimax-image-mcp
 
 # Verify the install
 npm ls -g minimax-image-mcp
-# minimax-image-mcp@1.1.0 <npm-global-path>
+# minimax-image-mcp@1.2.0 <npm-global-path>
 
 # Show the install path (used in your MCP client config)
 npm root -g
@@ -320,6 +321,7 @@ You can also optionally set:
 | --- | --- | --- |
 | `MINIMAX_OUTPUT_DIR` | `./output` | Default directory when the tool omits `output_dir`. Absolute or relative (relative must stay under process cwd). |
 | `MINIMAX_ALLOWED_OUTPUT_ROOTS` | — | Optional lockdown: delimiter-separated roots (`;` on Windows, `:` on Unix). When set, every resolved `output_dir` must be under one of these roots. |
+| `MINIMAX_ALLOWED_REFERENCE_ROOTS` | — | Optional lockdown: delimiter-separated roots. When set, every local `subject_reference` file must be under one of these roots. |
 | `MINIMAX_TIMEOUT_MS` | `60000` | Request timeout in milliseconds (`1000`–`600000`). |
 | `MINIMAX_MAX_RETRIES` | `3` | Automatic retries for transient errors (`0`–`10`). |
 
@@ -394,7 +396,18 @@ Running this twice with the same seed produces the same 4 images.
 }
 ```
 
-The reference can be a public `http(s)` URL or a base64 data URL (`data:image/jpeg;base64,...` or `data:image/png;base64,...`) under 10 MB. The API accepts one reference image per request.
+You can also use a local file — pass an absolute path when the file is in the workspace:
+
+```json
+{
+  "prompt": "the same character in a cyberpunk city at night",
+  "subject_reference": [
+    { "type": "character", "image_file": "C:\\art\\my-character.png" }
+  ]
+}
+```
+
+The reference can be a public `http(s)` URL, a base64 data URL (`data:image/jpeg;base64,...` or `data:image/png;base64,...`), or a local JPEG/PNG file under 10 MB. Local files are read by the server and converted to a data URL before the API call; relative paths must stay under the process cwd, and `MINIMAX_ALLOWED_REFERENCE_ROOTS` can lock reads to an allowlist. The API accepts one reference image per request.
 
 ## API Reference
 
@@ -413,7 +426,7 @@ The reference can be a public `http(s)` URL or a base64 data URL (`data:image/jp
 | `seed` | uint32 | ❌ | — | 0 to 4294967295 | For reproducibility |
 | `response_format` | enum | ❌ | `base64` | `base64` or `url` | `base64` recommended; URLs expire in 24h |
 | `prompt_optimizer` | boolean | ❌ | `false` | — | Server-side prompt rewrite |
-| `subject_reference` | array | ❌ | — | 1 item | Character reference: public `http(s)` URL or base64 data URL (JPEG/PNG, under 10 MB) |
+| `subject_reference` | array | ❌ | — | 1 item | Character reference: public `http(s)` URL, base64 data URL, or local JPEG/PNG path (under 10 MB) |
 | `output_dir` | string | ❌ | `./output` | absolute path accepted; relative must stay under process cwd | Where to save the generated files. Pass an absolute workspace path to save in the project. |
 | `inline_images` | boolean | ❌ | `true` | — | Attach generated images as MCP `image` content blocks. Set `false` for large batches to save context. |
 
@@ -483,7 +496,7 @@ The text portion of the error result always includes a **Recovery** hint when on
 - **Rate limit:** 10 RPM officially documented, but the real bottleneck is ~16s of model latency per request.
 - **No streaming** — the entire image is returned in one response. For very large batches, consider chunking manually.
 - **Two models** — `image-01` and `image-01-live`. Other MiniMax image models are not exposed.
-- **One reference image** — the upstream image-to-image API accepts a single character reference per request.
+- **One reference image** — the upstream image-to-image API accepts a single character reference per request; local files are read and converted to data URLs.
 - **No image editing** — this server generates new images only. Use a separate tool for inpainting or outpainting.
 
 ## Architecture
@@ -515,11 +528,11 @@ src/
 ├── errors.ts      # MiniMaxApiError, MiniMaxHttpError, cancellation/timeout errors, result helpers
 ├── constants.ts   # API URLs, models, limits, error codes, retry delays
 ├── env.ts         # API key, timeout, and retry configuration from the environment
-├── utils.ts       # Output directory resolution, file saving, bounded downloads, package metadata
-├── utils.test.ts  # 50 unit tests
+├── utils.ts       # Output/reference path guards, file saving, bounded downloads, package metadata
+├── utils.test.ts  # 61 unit tests
 ├── client.test.ts # 24 unit tests (envelope, retry, timeout, cancellation)
-├── schemas.test.ts # 33 unit tests (input/output validation)
-└── server.test.ts # 19 integration tests (tool callback, inline images, failures)
+├── schemas.test.ts # 36 unit tests (input/output validation)
+└── server.test.ts # 21 integration tests (tool callback, inline images, failures)
 ```
 
 **Request flow:**
@@ -527,7 +540,7 @@ src/
 1. `index.ts` reads `MINIMAX_API_KEY` and constructs a `MiniMaxClient`.
 2. `createServer(client)` builds an `McpServer` and registers the `minimax_image_generate` tool with input/output Zod schemas.
 3. The client sends an MCP `tools/call` request on stdio.
-4. The server validates input (including cross-field rules), resolves `output_dir` (rejecting relative escapes), and calls `client.generateImage(...)`.
+4. The server validates input (including cross-field rules), resolves `output_dir` (rejecting relative escapes), and converts local `subject_reference` files to data URLs.
 5. The client sends the request with timeout and cancellation, validates the `base_resp` envelope, and retries transient failures.
 6. The server saves images in parallel via `Promise.allSettled`, returns structured output, and attaches inline image blocks when enabled.
 7. The server sends optional `notifications/progress` to the client if a `progressToken` was provided in the request.
@@ -569,7 +582,7 @@ npm install
 The test suite uses [Vitest](https://vitest.dev/) with `v8` coverage. The CI matrix runs on Ubuntu, Windows, and macOS, across Node 20 and Node 22 — 6 combinations total.
 
 ```bash
-npm test            # 159 tests, ~1.5s
+npm test            # 175 tests, ~1.6s
 npm run coverage    # report in coverage/, thresholds enforced
 ```
 
@@ -582,7 +595,7 @@ npm run coverage    # report in coverage/, thresholds enforced
 | Functions | 70% |
 | Lines | 70% |
 
-Current coverage: **93.9% lines, 89.8% branches, 95.9% functions, 93.9% statements.**
+Current coverage: **94.0% lines, 88.3% branches, 96.2% functions, 94.0% statements.**
 
 ## Security
 

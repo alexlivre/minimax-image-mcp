@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-11-11
+
+### Added
+
+- **Local reference images:** `subject_reference.image_file` now accepts a local JPEG/PNG path in addition to public URLs and base64 data URLs. The server resolves symlinks, validates magic bytes and the 10 MB limit, and converts the file to a data URL before the API call.
+- **Read lockdown:** optional `MINIMAX_ALLOWED_REFERENCE_ROOTS` restricts which local directories can be read.
+- **Tests:** 175 total (from 159), including local-path conversion, missing files, WebP rejection, size limits, and read-root enforcement.
+
+### Changed
+
+- README and SECURITY now document the reference-image read boundary and the new environment variable.
+
 ## [1.1.0] - 2026-11-11
 
 ### Added

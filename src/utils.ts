@@ -1,10 +1,15 @@
 import { readFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DOWNLOAD_TIMEOUT_MS, MAX_DOWNLOAD_BYTES } from "./constants.js";
+import {
+  DOWNLOAD_TIMEOUT_MS,
+  MAX_DOWNLOAD_BYTES,
+  MAX_REFERENCE_BYTES,
+} from "./constants.js";
+import { RequestCancelledError } from "./errors.js";
 import { fetchBuffer } from "./http.js";
 
 export const DEFAULT_OUTPUT_DIR = "./output";
@@ -60,6 +65,107 @@ export function resolveOutputDir(dir?: string): string {
     throw outsideAllowedError(resolved, cwd);
   }
   return resolved;
+}
+
+function parseAllowedReferenceRoots(): string[] | null {
+  const raw = process.env.MINIMAX_ALLOWED_REFERENCE_ROOTS?.trim();
+  if (!raw) return null;
+  const roots = raw
+    .split(delimiter)
+    .map((root) => root.trim())
+    .filter(Boolean)
+    .map((root) => resolve(root));
+  return roots.length > 0 ? roots : null;
+}
+
+function referenceOutsideAllowedError(resolved: string, allowed: string): Error {
+  return new Error(
+    `subject_reference path outside allowed directory: ${resolved}\nAllowed: ${allowed}\n` +
+      `Pass an absolute path, or set MINIMAX_ALLOWED_REFERENCE_ROOTS.`,
+  );
+}
+
+function assertReferencePathAllowed(resolved: string, original: string): void {
+  const allowedRoots = parseAllowedReferenceRoots();
+
+  if (allowedRoots) {
+    if (!allowedRoots.some((root) => isPathInside(resolved, root))) {
+      throw referenceOutsideAllowedError(resolved, allowedRoots.join(delimiter));
+    }
+    return;
+  }
+
+  if (isAbsolute(original)) return;
+
+  const cwd = process.cwd();
+  if (!isPathInside(resolved, cwd)) {
+    throw referenceOutsideAllowedError(resolved, cwd);
+  }
+}
+
+export async function resolveReferenceImage(
+  imageFile: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (signal?.aborted) throw new RequestCancelledError();
+
+  if (/^https?:\/\//i.test(imageFile)) return imageFile;
+
+  const dataUrl = /^data:image\/(?:jpeg|jpg|png);base64,([A-Za-z0-9+/=]+)$/i.exec(imageFile);
+  if (dataUrl) {
+    const payload = dataUrl[1] ?? "";
+    const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+    const bytes = Math.floor((payload.length * 3) / 4) - padding;
+    if (bytes > MAX_REFERENCE_BYTES) {
+      throw new Error(`Reference image exceeds ${MAX_REFERENCE_BYTES} bytes`);
+    }
+    return imageFile;
+  }
+
+  const requested = resolve(imageFile);
+  assertReferencePathAllowed(requested, imageFile);
+
+  let realResolved: string;
+  try {
+    realResolved = await realpath(requested);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      throw new Error(`Reference image not found: ${requested}`);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot access reference image: ${requested} (${message})`);
+  }
+
+  assertReferencePathAllowed(realResolved, imageFile);
+
+  const stats = await stat(realResolved);
+  if (!stats.isFile()) {
+    throw new Error(`Reference image is not a file: ${realResolved}`);
+  }
+  if (stats.size === 0) {
+    throw new Error(`Reference image is empty: ${realResolved}`);
+  }
+  if (stats.size > MAX_REFERENCE_BYTES) {
+    throw new Error(
+      `Reference image exceeds ${MAX_REFERENCE_BYTES} bytes: ${realResolved} (${stats.size} bytes)`,
+    );
+  }
+
+  const buffer = await readFile(realResolved);
+  if (signal?.aborted) throw new RequestCancelledError();
+
+  if (!isValidImage(buffer)) {
+    throw new Error(`Reference image is not a valid image (JPEG or PNG): ${realResolved}`);
+  }
+
+  const extension = detectImageExtension(buffer);
+  if (extension !== ".jpeg" && extension !== ".png") {
+    throw new Error(`Reference image must be JPEG or PNG: ${realResolved}`);
+  }
+
+  const mimeType = extension === ".png" ? "image/png" : "image/jpeg";
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
 }
 
 export function sanitizeFilename(prompt: string, maxLength = 50): string {

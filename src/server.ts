@@ -13,6 +13,7 @@ import {
   downloadImageFromUrl,
   readPackageMetadata,
   resolveOutputDir,
+  resolveReferenceImage,
   saveImage,
   type SavedImage,
 } from "./utils.js";
@@ -110,6 +111,15 @@ export function createServer(client: MiniMaxClient): McpServer {
       const notify = createProgressNotifier(extra);
 
       try {
+        const subjectReference = input.subject_reference
+          ? await Promise.all(
+              input.subject_reference.map(async (reference) => ({
+                type: reference.type,
+                image_file: await resolveReferenceImage(reference.image_file, extra.signal),
+              })),
+            )
+          : undefined;
+
         const outputDir = resolveOutputDir(input.output_dir);
         await mkdir(outputDir, { recursive: true }).catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -132,7 +142,7 @@ export function createServer(client: MiniMaxClient): McpServer {
             seed: input.seed,
             response_format: input.response_format,
             prompt_optimizer: input.prompt_optimizer,
-            subject_reference: input.subject_reference,
+            subject_reference: subjectReference,
           },
           extra.signal,
         );

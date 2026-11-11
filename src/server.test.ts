@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const PNG_MAGIC = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
 
 const { registerToolMock, McpServerMock, saveImageMock, downloadImageFromUrlMock } = vi.hoisted(() => {
   const registerToolMock = vi.fn();
@@ -393,6 +397,53 @@ describe("createServer", () => {
 
     const result = (await toolCallback(
       { prompt: "a cat", model: "image-01-live", output_dir: tmpDir },
+      buildExtra(),
+    )) as CallToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("converts a local reference image to a data URL before calling the API", async () => {
+    const referencePath = join(tmpDir, "reference.png");
+    writeFileSync(referencePath, PNG_MAGIC);
+    const spy = vi
+      .spyOn(client, "generateImage")
+      .mockResolvedValue(successResponse([]));
+
+    await toolCallback(
+      {
+        prompt: "a cat",
+        subject_reference: [{ type: "character", image_file: referencePath }],
+        output_dir: tmpDir,
+      },
+      buildExtra(),
+    );
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject_reference: [
+          expect.objectContaining({
+            type: "character",
+            image_file: expect.stringMatching(/^data:image\/png;base64,/),
+          }),
+        ],
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("returns isError when the local reference image does not exist", async () => {
+    const spy = vi.spyOn(client, "generateImage");
+
+    const result = (await toolCallback(
+      {
+        prompt: "a cat",
+        subject_reference: [
+          { type: "character", image_file: join(tmpDir, "missing.png") },
+        ],
+        output_dir: tmpDir,
+      },
       buildExtra(),
     )) as CallToolResult;
 

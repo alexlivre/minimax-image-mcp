@@ -222,6 +222,40 @@ describe("ImageGenerateSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts a local JPEG/PNG file path reference", () => {
+    for (const imageFile of [
+      "C:\\images\\reference.png",
+      "./refs/reference.jpg",
+      "/home/user/refs/reference.jpeg",
+    ]) {
+      const result = ImageGenerateSchema.safeParse({
+        prompt: "x",
+        subject_reference: [{ type: "character", image_file: imageFile }],
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("rejects a local path without an image extension", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      subject_reference: [
+        { type: "character", image_file: "C:\\images\\reference.txt" },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects non-http URI schemes", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      subject_reference: [
+        { type: "character", image_file: "ftp://example.com/reference.png" },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("rejects subject_reference with invalid URL", () => {
     const result = ImageGenerateSchema.safeParse({
       prompt: "x",

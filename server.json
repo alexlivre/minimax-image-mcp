@@ -3,7 +3,7 @@
   "name": "io.github.alexlivre/minimax-image-mcp",
   "title": "MiniMax Image Generation",
   "description": "Generate images with MiniMax image-01: batches, exact dimensions, and character references.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "websiteUrl": "https://github.com/alexlivre/minimax-image-mcp#readme",
   "repository": {
     "url": "https://github.com/alexlivre/minimax-image-mcp",
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "minimax-image-mcp",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "transport": {
         "type": "stdio"
       },
@@ -32,6 +32,11 @@
         {
           "name": "MINIMAX_ALLOWED_OUTPUT_ROOTS",
           "description": "Optional delimiter-separated allowlist of directories where images may be written",
+          "isRequired": false
+        },
+        {
+          "name": "MINIMAX_ALLOWED_REFERENCE_ROOTS",
+          "description": "Optional delimiter-separated allowlist of directories from which reference images may be read",
           "isRequired": false
         },
         {
