@@ -12,3 +12,5 @@ Thumbs.db
 .idea/
 .vscode/
 .opencode/
+.commandcode/
+.docs_cache/

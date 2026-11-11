@@ -4,29 +4,36 @@ import {
   ImageGenerateOutputSchema,
 } from "./schemas.js";
 
+const REFERENCE_URL = "https://example.com/cat.png";
+
 describe("ImageGenerateSchema", () => {
   it("accepts minimal prompt with defaults", () => {
     const result = ImageGenerateSchema.parse({ prompt: "a" });
     expect(result.prompt).toBe("a");
+    expect(result.model).toBe("image-01");
     expect(result.aspect_ratio).toBe("1:1");
     expect(result.n).toBe(1);
     expect(result.response_format).toBe("base64");
     expect(result.prompt_optimizer).toBe(false);
+    expect(result.inline_images).toBe(true);
   });
 
   it("accepts all fields filled", () => {
     const result = ImageGenerateSchema.parse({
       prompt: "A cyberpunk cat",
+      model: "image-01",
       aspect_ratio: "16:9",
       n: 4,
       seed: 42,
       response_format: "url",
       prompt_optimizer: true,
       subject_reference: [
-        { type: "character", image_file: "https://example.com/cat.png" },
+        { type: "character", image_file: REFERENCE_URL },
       ],
       output_dir: "./my-output",
+      inline_images: false,
     });
+    expect(result.model).toBe("image-01");
     expect(result.aspect_ratio).toBe("16:9");
     expect(result.n).toBe(4);
     expect(result.seed).toBe(42);
@@ -34,6 +41,7 @@ describe("ImageGenerateSchema", () => {
     expect(result.prompt_optimizer).toBe(true);
     expect(result.subject_reference).toHaveLength(1);
     expect(result.output_dir).toBe("./my-output");
+    expect(result.inline_images).toBe(false);
   });
 
   it("rejects empty prompt", () => {
@@ -57,6 +65,14 @@ describe("ImageGenerateSchema", () => {
     const result = ImageGenerateSchema.safeParse({
       prompt: "x",
       aspect_ratio: "5:5",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an invalid model", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      model: "image-02",
     });
     expect(result.success).toBe(false);
   });
@@ -100,14 +116,108 @@ describe("ImageGenerateSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects subject_reference with more than 5 items", () => {
-    const refs = Array.from({ length: 6 }, () => ({
+  it("accepts valid width and height", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      width: 1024,
+      height: 1536,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects width without height", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      width: 1024,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects height without width", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      height: 1024,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects dimensions not divisible by 8", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      width: 1002,
+      height: 1024,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects dimensions outside 512-2048", () => {
+    expect(
+      ImageGenerateSchema.safeParse({ prompt: "x", width: 256, height: 512 }).success,
+    ).toBe(false);
+    expect(
+      ImageGenerateSchema.safeParse({ prompt: "x", width: 2056, height: 2048 }).success,
+    ).toBe(false);
+  });
+
+  it("accepts image-01-live with a subject reference", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      model: "image-01-live",
+      subject_reference: [{ type: "character", image_file: REFERENCE_URL }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects image-01-live without a subject reference", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      model: "image-01-live",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects width/height for image-01-live", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      model: "image-01-live",
+      width: 1024,
+      height: 1024,
+      subject_reference: [{ type: "character", image_file: REFERENCE_URL }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects subject_reference with more than 1 item", () => {
+    const refs = Array.from({ length: 2 }, () => ({
       type: "character" as const,
-      image_file: "https://example.com/x.png",
+      image_file: REFERENCE_URL,
     }));
     const result = ImageGenerateSchema.safeParse({
       prompt: "x",
       subject_reference: refs,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a base64 data URL reference", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      subject_reference: [
+        {
+          type: "character",
+          image_file: "data:image/png;base64,aGVsbG8=",
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a non-image data URL reference", () => {
+    const result = ImageGenerateSchema.safeParse({
+      prompt: "x",
+      subject_reference: [
+        { type: "character", image_file: "data:text/plain;base64,aGVsbG8=" },
+      ],
     });
     expect(result.success).toBe(false);
   });

@@ -29,6 +29,35 @@ export class MiniMaxApiError extends Error {
   }
 }
 
+export class MiniMaxHttpError extends Error {
+  constructor(
+    message: string,
+    readonly httpStatus: number,
+    readonly retryAfterMs?: number
+  ) {
+    super(message);
+    this.name = "MiniMaxHttpError";
+  }
+
+  get isRetryable(): boolean {
+    return this.httpStatus === 429 || this.httpStatus >= 500;
+  }
+}
+
+export class RequestCancelledError extends Error {
+  constructor(message = "Operation cancelled by client") {
+    super(message);
+    this.name = "RequestCancelledError";
+  }
+}
+
+export class RequestTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RequestTimeoutError";
+  }
+}
+
 export class EmptyResponseError extends Error {
   readonly code = "EMPTY_RESPONSE";
 
@@ -48,6 +77,13 @@ export function toErrorResult(error: unknown): CallToolResult {
 
     return {
       content: [{ type: "text" as const, text: parts.join("\n") }],
+      isError: true as const,
+    };
+  }
+
+  if (error instanceof MiniMaxHttpError) {
+    return {
+      content: [{ type: "text" as const, text: error.message }],
       isError: true as const,
     };
   }

@@ -19,6 +19,14 @@ import {
   downloadImageFromUrl,
   readPackageMetadata,
 } from "./utils.js";
+import {
+  DOWNLOAD_TIMEOUT_MS,
+  MAX_DOWNLOAD_BYTES,
+} from "./constants.js";
+import {
+  RequestCancelledError,
+  RequestTimeoutError,
+} from "./errors.js";
 
 const IS_WINDOWS = platform === "win32";
 const OUTSIDE_ABS_PATH = IS_WINDOWS ? "C:\\Windows" : "/etc";
@@ -167,8 +175,9 @@ describe("sanitizeFilename", () => {
     expect(sanitizeFilename("hello   world")).toBe("hello-world");
   });
 
-  it("returns 'image' for prompt with only accented characters", () => {
-    expect(sanitizeFilename("áéíóú")).toBe("image");
+  it("strips diacritics instead of dropping the letters", () => {
+    expect(sanitizeFilename("áéíóú")).toBe("aeiou");
+    expect(sanitizeFilename("coração")).toBe("coracao");
   });
 
   it("returns 'image' for prompt with only emojis", () => {
@@ -248,62 +257,66 @@ describe("saveImage", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("returns the full filepath inside outputDir", async () => {
-    const filepath = await saveImage(VALID_JPEG_B64, "a cat", tempDir, 0);
-    expect(filepath.startsWith(tempDir + sep)).toBe(true);
-    expect(existsSync(filepath)).toBe(true);
+  it("returns the saved path inside outputDir", async () => {
+    const saved = await saveImage(VALID_JPEG_B64, "a cat", tempDir, 0);
+    expect(saved.path.startsWith(tempDir + sep)).toBe(true);
+    expect(existsSync(saved.path)).toBe(true);
+    expect(saved.mimeType).toBe("image/jpeg");
   });
 
   it("writes base64-decoded content correctly", async () => {
     const payload = "hello world from base64";
     const buf = Buffer.concat([Buffer.from(JPEG_MAGIC), Buffer.from(payload)]);
     const b64 = buf.toString("base64");
-    const filepath = await saveImage(b64, "a cat", tempDir, 0);
-    const content = readFileSync(filepath);
+    const saved = await saveImage(b64, "a cat", tempDir, 0);
+    const content = readFileSync(saved.path);
     expect(content.subarray(JPEG_MAGIC.length).toString("utf8")).toBe(payload);
   });
 
   it("filename contains the slug of the prompt", async () => {
-    const filepath = await saveImage(VALID_JPEG_B64, "A Sunny Cat", tempDir, 0);
-    expect(filepath).toMatch(/a-sunny-cat/);
+    const saved = await saveImage(VALID_JPEG_B64, "A Sunny Cat", tempDir, 0);
+    expect(saved.path).toMatch(/a-sunny-cat/);
   });
 
   it("filename ends with -<index+1>-<8-hex>.jpeg", async () => {
-    const filepath = await saveImage(VALID_JPEG_B64, "cat", tempDir, 2);
-    expect(filepath).toMatch(/-3-[\da-f]{8}\.jpeg$/);
+    const saved = await saveImage(VALID_JPEG_B64, "cat", tempDir, 2);
+    expect(saved.path).toMatch(/-3-[\da-f]{8}\.jpeg$/);
   });
 
   it("uses 1-indexed number in filename (index 0 becomes 1)", async () => {
-    const filepath = await saveImage(VALID_JPEG_B64, "cat", tempDir, 0);
-    expect(filepath).toMatch(/-1-[\da-f]{8}\.jpeg$/);
+    const saved = await saveImage(VALID_JPEG_B64, "cat", tempDir, 0);
+    expect(saved.path).toMatch(/-1-[\da-f]{8}\.jpeg$/);
   });
 
   it("filename includes a numeric timestamp segment", async () => {
-    const filepath = await saveImage(VALID_JPEG_B64, "cat", tempDir, 0);
-    expect(filepath).toMatch(/cat-\d+-\d+-[\da-f]{8}\.jpeg$/);
+    const saved = await saveImage(VALID_JPEG_B64, "cat", tempDir, 0);
+    expect(saved.path).toMatch(/cat-\d+-\d+-[\da-f]{8}\.jpeg$/);
   });
 
   it("two saves with same prompt do not collide (UUID suffix)", async () => {
     const a = await saveImage(VALID_JPEG_B64, "cat", tempDir, 0);
     const b = await saveImage(VALID_JPEG_B64, "cat", tempDir, 0);
-    expect(a).not.toBe(b);
-    expect(existsSync(a)).toBe(true);
-    expect(existsSync(b)).toBe(true);
+    expect(a.path).not.toBe(b.path);
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
   });
 
   it("writes a jpeg file for JPEG data", async () => {
-    const filepath = await saveImage(VALID_JPEG_B64, "cat", tempDir, 0);
-    expect(filepath.endsWith(".jpeg")).toBe(true);
+    const saved = await saveImage(VALID_JPEG_B64, "cat", tempDir, 0);
+    expect(saved.path.endsWith(".jpeg")).toBe(true);
+    expect(saved.mimeType).toBe("image/jpeg");
   });
 
   it("writes a png file for PNG data", async () => {
-    const filepath = await saveImage(VALID_PNG_B64, "cat", tempDir, 0);
-    expect(filepath.endsWith(".png")).toBe(true);
+    const saved = await saveImage(VALID_PNG_B64, "cat", tempDir, 0);
+    expect(saved.path.endsWith(".png")).toBe(true);
+    expect(saved.mimeType).toBe("image/png");
   });
 
   it("writes a webp file for WebP data", async () => {
-    const filepath = await saveImage(VALID_WEBP_B64, "cat", tempDir, 0);
-    expect(filepath.endsWith(".webp")).toBe(true);
+    const saved = await saveImage(VALID_WEBP_B64, "cat", tempDir, 0);
+    expect(saved.path.endsWith(".webp")).toBe(true);
+    expect(saved.mimeType).toBe("image/webp");
   });
 });
 
@@ -317,6 +330,7 @@ describe("downloadImageFromUrl", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("downloads and returns a Buffer for a valid image URL", async () => {
@@ -348,23 +362,54 @@ describe("downloadImageFromUrl", () => {
       .rejects.toThrow(/Downloaded data from URL is not a valid image/);
   });
 
-  it("throws when download times out", async () => {
-    const controller = new AbortController();
-    vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+  it("throws when the declared content length exceeds the limit", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response("x", {
+        status: 200,
+        headers: { "Content-Length": String(MAX_DOWNLOAD_BYTES + 1) },
+      }),
+    );
 
+    await expect(downloadImageFromUrl("https://example.com/huge.jpg"))
+      .rejects.toThrow(/too large/);
+  });
+
+  it("throws RequestTimeoutError when the download times out", async () => {
+    vi.useFakeTimers();
     fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
       return new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => {
-          reject(new DOMException("The operation was aborted.", "AbortError"));
-        }, { once: true });
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
       });
     });
 
     const promise = downloadImageFromUrl("https://example.com/slow.jpg");
+    const assertion = expect(promise).rejects.toBeInstanceOf(RequestTimeoutError);
+
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_TIMEOUT_MS);
+    await assertion;
+  });
+
+  it("throws RequestCancelledError when the caller aborts", async () => {
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    });
+
+    const controller = new AbortController();
+    const promise = downloadImageFromUrl("https://example.com/slow.jpg", controller.signal);
+    const assertion = expect(promise).rejects.toBeInstanceOf(RequestCancelledError);
 
     controller.abort();
-
-    await expect(promise).rejects.toThrow();
+    await assertion;
   });
 });
 

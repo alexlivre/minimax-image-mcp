@@ -32,13 +32,17 @@ import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sd
 
 type ToolParams = {
   prompt: string;
+  model?: "image-01" | "image-01-live";
   aspect_ratio?: string;
+  width?: number;
+  height?: number;
   n?: number;
   seed?: number;
   response_format?: "url" | "base64";
   prompt_optimizer?: boolean;
   subject_reference?: Array<{ type: "character"; image_file: string }>;
   output_dir?: string;
+  inline_images?: boolean;
 };
 type ToolCallback = (
   params: ToolParams,
@@ -53,8 +57,12 @@ type ToolConfig = {
   annotations: unknown;
 };
 
+type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
 type CallToolResult = {
-  content: Array<{ type: "text"; text: string }>;
+  content: ContentBlock[];
   structuredContent?: unknown;
   isError?: boolean;
 };
@@ -117,8 +125,10 @@ describe("createServer", () => {
 
     saveImageMock.mockReset();
     saveImageMock.mockImplementation(
-      async (_data: string, _prompt: string, dir: string, idx: number) =>
-        join(dir, `fake-${idx}.jpeg`),
+      async (_data: string, _prompt: string, dir: string, idx: number) => ({
+        path: join(dir, `fake-${idx}.jpeg`),
+        mimeType: "image/jpeg",
+      }),
     );
 
     downloadImageFromUrlMock.mockReset();
@@ -169,7 +179,8 @@ describe("createServer", () => {
     )) as CallToolResult;
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(
+    expect(result.content[0]?.type).toBe("text");
+    expect(result.content[0]?.type === "text" ? result.content[0].text : "").toMatch(
       /output_dir outside allowed directory/,
     );
   });
@@ -185,11 +196,12 @@ describe("createServer", () => {
     )) as CallToolResult;
 
     expect(result.isError).toBeUndefined();
-    expect(result.content[0].text).toMatch(/Generated 2 image\(s\); saved 2\./);
-
-    const parsed = ImageGenerateOutputSchema.safeParse(
-      result.structuredContent,
+    expect(result.content[0]?.type).toBe("text");
+    expect(result.content[0]?.type === "text" ? result.content[0].text : "").toMatch(
+      /Generated 2 image\(s\); saved 2\./,
     );
+
+    const parsed = ImageGenerateOutputSchema.safeParse(result.structuredContent);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.image_count).toBe(2);
@@ -197,6 +209,43 @@ describe("createServer", () => {
       expect(parsed.data.file_paths).toHaveLength(2);
       expect(parsed.data.failures).toBeUndefined();
     }
+  });
+
+  it("attaches image content blocks by default", async () => {
+    vi.spyOn(client, "generateImage").mockResolvedValue(
+      successResponse(["aGVsbG8=", "d29ybGQ="]),
+    );
+
+    const result = (await toolCallback(
+      { prompt: "a cat", output_dir: tmpDir },
+      buildExtra(),
+    )) as CallToolResult;
+
+    expect(result.content).toHaveLength(3);
+    expect(result.content[1]).toEqual({
+      type: "image",
+      data: "aGVsbG8=",
+      mimeType: "image/jpeg",
+    });
+    expect(result.content[2]).toEqual({
+      type: "image",
+      data: "d29ybGQ=",
+      mimeType: "image/jpeg",
+    });
+  });
+
+  it("omits image content blocks when inline_images is false", async () => {
+    vi.spyOn(client, "generateImage").mockResolvedValue(
+      successResponse(["aGVsbG8="]),
+    );
+
+    const result = (await toolCallback(
+      { prompt: "a cat", output_dir: tmpDir, inline_images: false },
+      buildExtra(),
+    )) as CallToolResult;
+
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0]?.type).toBe("text");
   });
 
   it("returns isError when the API returns an empty image array", async () => {
@@ -208,7 +257,8 @@ describe("createServer", () => {
     )) as CallToolResult;
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(
+    expect(result.content[0]?.type).toBe("text");
+    expect(result.content[0]?.type === "text" ? result.content[0].text : "").toMatch(
       /API returned success but no images/,
     );
   });
@@ -223,7 +273,7 @@ describe("createServer", () => {
         if (idx === 1) {
           throw new Error("disk full");
         }
-        return join(dir, `fake-${idx}.jpeg`);
+        return { path: join(dir, `fake-${idx}.jpeg`), mimeType: "image/jpeg" };
       },
     );
 
@@ -233,18 +283,15 @@ describe("createServer", () => {
     )) as CallToolResult;
 
     expect(result.isError).toBeUndefined();
-    const parsed = ImageGenerateOutputSchema.safeParse(
-      result.structuredContent,
-    );
+    const parsed = ImageGenerateOutputSchema.safeParse(result.structuredContent);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.image_count).toBe(3);
       expect(parsed.data.saved_count).toBe(2);
       expect(parsed.data.file_paths).toHaveLength(2);
-      expect(parsed.data.failures).toEqual([
-        { index: 1, error: "disk full" },
-      ]);
+      expect(parsed.data.failures).toEqual([{ index: 1, error: "disk full" }]);
     }
+    expect(result.content.filter((block) => block.type === "image")).toHaveLength(2);
   });
 
   it("returns isError when every save fails", async () => {
@@ -257,7 +304,10 @@ describe("createServer", () => {
     )) as CallToolResult;
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/^Failed to save all 1 image/);
+    expect(result.content[0]?.type).toBe("text");
+    expect(result.content[0]?.type === "text" ? result.content[0].text : "").toMatch(
+      /^Failed to save all 1 image/,
+    );
   });
 
   it("forwards params to client.generateImage in the expected shape", async () => {
@@ -281,17 +331,73 @@ describe("createServer", () => {
       buildExtra(),
     );
 
-    expect(spy).toHaveBeenCalledWith({
-      prompt: "a cat",
-      aspect_ratio: "16:9",
-      n: 2,
-      seed: 42,
-      response_format: "url",
-      prompt_optimizer: true,
-      subject_reference: [
-        { type: "character", image_file: "https://example.com/cat.png" },
-      ],
-    });
+    expect(spy).toHaveBeenCalledWith(
+      {
+        prompt: "a cat",
+        model: "image-01",
+        aspect_ratio: "16:9",
+        width: undefined,
+        height: undefined,
+        n: 2,
+        seed: 42,
+        response_format: "url",
+        prompt_optimizer: true,
+        subject_reference: [
+          { type: "character", image_file: "https://example.com/cat.png" },
+        ],
+      },
+      expect.anything(),
+    );
+  });
+
+  it("forwards width/height and model to the client", async () => {
+    const spy = vi
+      .spyOn(client, "generateImage")
+      .mockResolvedValue(successResponse([]));
+
+    await toolCallback(
+      {
+        prompt: "a cat",
+        model: "image-01",
+        width: 1024,
+        height: 1536,
+        output_dir: tmpDir,
+      },
+      buildExtra(),
+    );
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "image-01",
+        width: 1024,
+        height: 1536,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("rejects width without height before calling the API", async () => {
+    const spy = vi.spyOn(client, "generateImage");
+
+    const result = (await toolCallback(
+      { prompt: "a cat", width: 1024, output_dir: tmpDir },
+      buildExtra(),
+    )) as CallToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("rejects image-01-live without subject_reference", async () => {
+    const spy = vi.spyOn(client, "generateImage");
+
+    const result = (await toolCallback(
+      { prompt: "a cat", model: "image-01-live", output_dir: tmpDir },
+      buildExtra(),
+    )) as CallToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it("does not call sendNotification when no progressToken is provided", async () => {
@@ -370,7 +476,10 @@ describe("createServer", () => {
     )) as CallToolResult;
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/cancel/i);
+    expect(result.content[0]?.type).toBe("text");
+    expect(result.content[0]?.type === "text" ? result.content[0].text : "").toMatch(
+      /cancel/i,
+    );
   });
 
   it("saves images from URLs when API returns image_urls", async () => {
@@ -387,7 +496,13 @@ describe("createServer", () => {
     )) as CallToolResult;
 
     expect(result.isError).toBeUndefined();
-    expect(result.content[0].text).toMatch(/Generated 1 image/);
-    expect(downloadImageFromUrlMock).toHaveBeenCalledWith("https://example.com/a.jpg");
+    expect(result.content[0]?.type).toBe("text");
+    expect(result.content[0]?.type === "text" ? result.content[0].text : "").toMatch(
+      /Generated 1 image/,
+    );
+    expect(downloadImageFromUrlMock).toHaveBeenCalledWith(
+      "https://example.com/a.jpg",
+      expect.anything(),
+    );
   });
 });

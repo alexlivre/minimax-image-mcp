@@ -1,0 +1,50 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.alexlivre/minimax-image-mcp",
+  "title": "MiniMax Image Generation",
+  "description": "Generate images with MiniMax image-01: batches, exact dimensions, and character references.",
+  "version": "1.1.0",
+  "websiteUrl": "https://github.com/alexlivre/minimax-image-mcp#readme",
+  "repository": {
+    "url": "https://github.com/alexlivre/minimax-image-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "minimax-image-mcp",
+      "version": "1.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "MINIMAX_API_KEY",
+          "description": "Bearer token for the MiniMax API",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "MINIMAX_OUTPUT_DIR",
+          "description": "Default directory for generated images (default: ./output)",
+          "isRequired": false
+        },
+        {
+          "name": "MINIMAX_ALLOWED_OUTPUT_ROOTS",
+          "description": "Optional delimiter-separated allowlist of directories where images may be written",
+          "isRequired": false
+        },
+        {
+          "name": "MINIMAX_TIMEOUT_MS",
+          "description": "Request timeout in milliseconds (default: 60000)",
+          "isRequired": false
+        },
+        {
+          "name": "MINIMAX_MAX_RETRIES",
+          "description": "Maximum automatic retries for transient errors (default: 3)",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 # Auditoria — `minimax-image-mcp`
 
+> **Nota (2026-11-11):** documento histórico da versão 1.0.x. A versão 1.1.0 corrigiu o parsing do envelope de erro, a taxonomia de códigos, o cancelamento, o slug de acentos e os itens de schema/output listados aqui, além de adicionar `width`/`height`, `model`, `inline_images` e limites de download. Use o README e o CHANGELOG como fonte atual.
+
 > **Tipo:** Code review somente leitura
 > **Escopo:** `src/`, `tsconfig.json`, `package.json`, `.gitignore`
 > **Build:** `npm run build` compila sem erros nem warnings (`strict: true` ativo)

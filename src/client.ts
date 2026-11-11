@@ -1,23 +1,33 @@
-import { z } from "zod";
+import type { z } from "zod";
 import {
   IMAGE_API_URL,
-  MODEL_ID,
+  DEFAULT_MODEL,
+  DEFAULT_ASPECT_RATIO,
   MAX_BACKOFF_MS,
-  MAX_RETRIES,
-  RETRY_DELAY_1002_MS,
-  RETRY_DELAY_2045_MS,
-  DEFAULT_TIMEOUT_MS,
+  MAX_RETRY_AFTER_MS,
   BODY_READ_TIMEOUT_MS,
+  RETRY_DELAYS,
 } from "./constants.js";
-import { MiniMaxApiError } from "./errors.js";
+import {
+  MiniMaxApiError,
+  MiniMaxHttpError,
+  RequestCancelledError,
+  RequestTimeoutError,
+} from "./errors.js";
+import { getMaxRetries, getTimeoutMs } from "./env.js";
+import { fetchText } from "./http.js";
 import {
   ImageGenerateResponseSchema,
+  ResponseEnvelopeSchema,
   type ImageGenerateResponse,
 } from "./schemas.js";
 
 export interface ImageGenerateParams {
   prompt: string;
+  model?: string;
   aspect_ratio?: string;
+  width?: number;
+  height?: number;
   response_format?: "url" | "base64";
   n?: number;
   seed?: number;
@@ -25,85 +35,161 @@ export interface ImageGenerateParams {
   subject_reference?: Array<{ type: "character"; image_file: string }>;
 }
 
+function buildRequestBody(params: ImageGenerateParams): Record<string, unknown> {
+  const { prompt, model, width, height, aspect_ratio, ...rest } = params;
+  const dimensions =
+    width !== undefined && height !== undefined
+      ? { width, height }
+      : { aspect_ratio: aspect_ratio ?? DEFAULT_ASPECT_RATIO };
+
+  return {
+    model: model ?? DEFAULT_MODEL,
+    prompt,
+    ...dimensions,
+    ...rest,
+  };
+}
+
+function formatZodIssues(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => `${issue.path.map(String).join(".")} - ${issue.message}`)
+    .join("; ");
+}
+
+function parseRetryAfter(response: Response): number | undefined {
+  const raw = response.headers.get("retry-after");
+  if (!raw) return undefined;
+
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+  }
+
+  const date = Date.parse(raw);
+  if (!Number.isNaN(date)) {
+    return Math.min(Math.max(0, date - Date.now()), MAX_RETRY_AFTER_MS);
+  }
+
+  return undefined;
+}
+
+function fullJitterDelay(attempt: number): number {
+  const ceiling = Math.min(MAX_BACKOFF_MS, 1000 * Math.pow(2, attempt));
+  return Math.round(Math.random() * ceiling);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class MiniMaxClient {
   constructor(
     private readonly apiKey: string,
-    private readonly timeout: number = DEFAULT_TIMEOUT_MS,
+    private readonly timeout: number = getTimeoutMs(),
+    private readonly maxRetries: number = getMaxRetries(),
   ) {}
 
   async generateImage(
-    params: ImageGenerateParams
+    params: ImageGenerateParams,
+    signal?: AbortSignal,
   ): Promise<ImageGenerateResponse> {
     let lastError: Error | null = null;
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
-        const response = await fetch(IMAGE_API_URL, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            "Content-Type": "application/json",
+        const { response, text } = await fetchText(
+          IMAGE_API_URL,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${this.apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(buildRequestBody(params)),
           },
-          body: JSON.stringify({
-            model: MODEL_ID,
-            ...params,
-          }),
-          signal: AbortSignal.timeout(this.timeout),
-        });
+          {
+            requestTimeoutMs: this.timeout,
+            bodyTimeoutMs: Math.max(BODY_READ_TIMEOUT_MS, this.timeout),
+            signal,
+          },
+        );
 
-        const bodyPromise = response.text();
-        const bodyTimeoutSignal = AbortSignal.timeout(BODY_READ_TIMEOUT_MS);
-        const raw = await Promise.race([
-          bodyPromise,
-          new Promise<never>((_, reject) => {
-            bodyTimeoutSignal.addEventListener("abort", () => {
-              reject(new Error("Response body read timed out"));
-            }, { once: true });
-          }),
-        ]);
-        const data = ImageGenerateResponseSchema.parse(JSON.parse(raw));
-        const statusCode = data.base_resp?.status_code;
-
-        if (statusCode !== 0) {
-          throw new MiniMaxApiError(
-            data.base_resp?.status_msg || "Unknown error",
-            statusCode,
-            data.base_resp?.status_msg || "",
-            data
-          );
-        }
-
-        return data;
+        return this.parseResponse(text, response);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
+        if (
+          error instanceof RequestCancelledError ||
+          error instanceof RequestTimeoutError
+        ) {
+          throw error;
+        }
+
         if (error instanceof MiniMaxApiError) {
-          if (error.isFatal) throw error;
-          if (error.isRetryable && attempt < MAX_RETRIES) {
-            const delay =
-              error.statusCode === 1002
-                ? RETRY_DELAY_1002_MS
-                : RETRY_DELAY_2045_MS;
-            await new Promise((r) => setTimeout(r, delay));
+          if (error.isFatal || !error.isRetryable) throw error;
+          if (attempt < this.maxRetries) {
+            await sleep(RETRY_DELAYS[error.statusCode] ?? fullJitterDelay(attempt));
             continue;
           }
+          throw error;
         }
 
-        if (error instanceof z.ZodError) {
-          throw new Error(
-            `Unexpected API response shape: ${error.issues.map((i) => `${i.path.join(".")} - ${i.message}`).join("; ")}`
-          );
+        if (error instanceof MiniMaxHttpError) {
+          if (!error.isRetryable || attempt >= this.maxRetries) throw error;
+          await sleep(error.retryAfterMs ?? fullJitterDelay(attempt));
+          continue;
         }
 
-        if (attempt < MAX_RETRIES) {
-          const exponential = Math.min(MAX_BACKOFF_MS, 1000 * Math.pow(2, attempt));
-          const delay = Math.random() * exponential; // Full Jitter (AWS)
-          await new Promise((r) => setTimeout(r, Math.round(delay)));
+        if (attempt < this.maxRetries) {
+          await sleep(fullJitterDelay(attempt));
           continue;
         }
       }
     }
 
     throw lastError ?? new Error("Request failed after retries");
+  }
+
+  private parseResponse(text: string, response: Response): ImageGenerateResponse {
+    let json: unknown;
+
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new MiniMaxHttpError(
+        `MiniMax API returned invalid JSON (HTTP ${response.status})`,
+        response.status,
+        parseRetryAfter(response),
+      );
+    }
+
+    const envelope = ResponseEnvelopeSchema.safeParse(json);
+    if (envelope.success && envelope.data.base_resp.status_code !== 0) {
+      const baseResp = envelope.data.base_resp;
+      throw new MiniMaxApiError(
+        baseResp.status_msg || "Unknown error",
+        baseResp.status_code,
+        baseResp.status_msg,
+        json,
+      );
+    }
+
+    if (!response.ok) {
+      throw new MiniMaxHttpError(
+        `MiniMax API request failed: HTTP ${response.status} ${response.statusText}`.trim(),
+        response.status,
+        parseRetryAfter(response),
+      );
+    }
+
+    const parsed = ImageGenerateResponseSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new MiniMaxHttpError(
+        `Unexpected API response shape: ${formatZodIssues(parsed.error)}`,
+        response.status,
+      );
+    }
+
+    return parsed.data;
   }
 }

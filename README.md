@@ -43,7 +43,7 @@ If you use an MCP-aware LLM client and want to generate images from natural-lang
 - Speaks MCP over **stdio** (works with any compliant client; no HTTP transport to configure)
 - Validates every input with **Zod** before calling the API
 - Handles **retry with exponential backoff and AWS-style full jitter** for transient errors
-- Saves generated images to a directory you control, with a **strict path-traversal guard**
+- Saves generated images to a directory you control, with a **configurable output-directory guard**: relative paths must stay under the process cwd, absolute paths are accepted by design, and `MINIMAX_ALLOWED_OUTPUT_ROOTS` can lock writes to an allowlist
 - Returns a **structured output** (typed, machine-readable) so LLM clients can chain tool calls reliably
 - Sends optional **progress notifications** for long-running requests
 - Exits **cleanly on SIGINT/SIGTERM**
@@ -53,13 +53,17 @@ If you use an MCP-aware LLM client and want to generate images from natural-lang
 - **Text-to-image** generation from a single prompt
 - **Batch generation** — request up to 9 images in one call (≈8× faster than 9 separate calls at the same cost)
 - **Aspect ratios** — `1:1`, `16:9`, `4:3`, `3:2`, `2:3`, `3:4`, `9:16`, `21:9`
+- **Explicit dimensions** — `width`/`height` (512–2048 px, divisible by 8) when exact pixels matter
+- **Two models** — `image-01` (text-to-image and image-to-image) and `image-01-live` (character consistency)
 - **Seed-based reproducibility** — same prompt + same seed ⇒ same image
-- **Image-to-image with character references** — pass 1–5 reference image URLs
+- **Image-to-image with a character reference** — one reference image as a public URL or base64 data URL
 - **Prompt optimization** — optional auto-rewriting of the prompt server-side
 - **Response formats** — `base64` (recommended, persistent) or `url` (expires in 24h)
-- **Automatic retry** on rate-limit (1002, 60s backoff) and growth-limit (2045, 30s backoff) errors
+- **Inline image blocks** — results include MCP `image` content by default (`inline_images`)
+- **Automatic retry** on rate-limit (1002, 60s backoff), growth-limit (2045, 30s backoff), and transient HTTP 5xx
+- **Cancellation-aware** — client cancellation propagates to the upstream request and URL downloads
 - **Cross-platform** — verified on Ubuntu, Windows, and macOS via the CI matrix
-- **Type-safe end-to-end** — TypeScript `strict` + `noUncheckedIndexedAccess`, Zod schemas for input, Zod schemas for response
+- **Type-safe end-to-end** — TypeScript `strict` + `noUncheckedIndexedAccess`, Zod schemas for input, response, and output
 
 ## Quickstart
 
@@ -98,7 +102,7 @@ npm install -g minimax-image-mcp
 
 # Verify the install
 npm ls -g minimax-image-mcp
-# minimax-image-mcp@1.0.0 <npm-global-path>
+# minimax-image-mcp@1.1.0 <npm-global-path>
 
 # Show the install path (used in your MCP client config)
 npm root -g
@@ -316,6 +320,8 @@ You can also optionally set:
 | --- | --- | --- |
 | `MINIMAX_OUTPUT_DIR` | `./output` | Default directory when the tool omits `output_dir`. Absolute or relative (relative must stay under process cwd). |
 | `MINIMAX_ALLOWED_OUTPUT_ROOTS` | — | Optional lockdown: delimiter-separated roots (`;` on Windows, `:` on Unix). When set, every resolved `output_dir` must be under one of these roots. |
+| `MINIMAX_TIMEOUT_MS` | `60000` | Request timeout in milliseconds (`1000`–`600000`). |
+| `MINIMAX_MAX_RETRIES` | `3` | Automatic retries for transient errors (`0`–`10`). |
 
 For ready-to-use client configuration snippets (opencode, Claude Desktop, Cursor, VS Code) — including cross-platform paths for the **npm-installed** binary — see [Using via npm](#using-via-npm).
 
@@ -356,11 +362,26 @@ The server returns file paths under `./output/`:
   "prompt": "minimalist fox logo, geometric, monochrome",
   "n": 4,
   "seed": 42,
-  "aspect_ratio": "1:1"
+  "aspect_ratio": "1:1",
+  "inline_images": false
 }
 ```
 
 Running this twice with the same seed produces the same 4 images.
+
+### Example: exact pixel dimensions
+
+> "Generate a 1024×1536 portrait."
+
+```json
+{
+  "prompt": "editorial portrait of a fox, studio lighting",
+  "width": 1024,
+  "height": 1536
+}
+```
+
+`width` and `height` must be provided together, between 512 and 2048, and divisible by 8. When both are present they replace `aspect_ratio` in the upstream request.
 
 ### Example: image-to-image with character reference
 
@@ -373,6 +394,8 @@ Running this twice with the same seed produces the same 4 images.
 }
 ```
 
+The reference can be a public `http(s)` URL or a base64 data URL (`data:image/jpeg;base64,...` or `data:image/png;base64,...`) under 10 MB. The API accepts one reference image per request.
+
 ## API Reference
 
 ### Tool: `minimax_image_generate`
@@ -382,29 +405,35 @@ Running this twice with the same seed produces the same 4 images.
 | Parameter | Type | Required | Default | Constraints | Description |
 | --- | --- | --- | --- | --- | --- |
 | `prompt` | string | ✅ | — | 1–1500 chars | Image description |
-| `aspect_ratio` | enum | ❌ | `1:1` | one of 8 ratios | Output aspect ratio |
+| `model` | enum | ❌ | `image-01` | `image-01`, `image-01-live` | `image-01-live` requires `subject_reference` and ignores `width`/`height` |
+| `aspect_ratio` | enum | ❌ | `1:1` | one of 8 ratios | Output aspect ratio; ignored when `width` and `height` are provided |
+| `width` | integer | ❌ | — | 512–2048, divisible by 8 | Explicit width in pixels; requires `height` |
+| `height` | integer | ❌ | — | 512–2048, divisible by 8 | Explicit height in pixels; requires `width` |
 | `n` | integer | ❌ | `1` | 1–9 | Number of images in this call |
 | `seed` | uint32 | ❌ | — | 0 to 4294967295 | For reproducibility |
 | `response_format` | enum | ❌ | `base64` | `base64` or `url` | `base64` recommended; URLs expire in 24h |
 | `prompt_optimizer` | boolean | ❌ | `false` | — | Server-side prompt rewrite |
-| `subject_reference` | array | ❌ | — | 1–5 items | Character reference image URLs (HTTPS) |
+| `subject_reference` | array | ❌ | — | 1 item | Character reference: public `http(s)` URL or base64 data URL (JPEG/PNG, under 10 MB) |
 | `output_dir` | string | ❌ | `./output` | absolute path accepted; relative must stay under process cwd | Where to save the generated files. Pass an absolute workspace path to save in the project. |
+| `inline_images` | boolean | ❌ | `true` | — | Attach generated images as MCP `image` content blocks. Set `false` for large batches to save context. |
 
-**Output schema** (`ImageGenerateOutputSchema`):
+**Output schema** (`ImageGenerateOutputSchema`, also returned as `structuredContent`):
 
 ```ts
 {
   id: string,                  // upstream request ID
   image_count: number,         // number of images the API returned
   saved_count: number,         // number successfully written to disk
-  file_paths: string[],        // absolute or relative paths to saved JPEGs
+  file_paths: string[],        // absolute or relative paths to saved images
   failures?: { index: number; error: string }[],  // per-save errors (omitted on full success)
   metadata: {
-    failed_count: string,      // upstream "failed_count" (string per API)
+    failed_count: string,      // upstream "failed_count"
     success_count: string,     // upstream "success_count"
   }
 }
 ```
+
+The tool result also includes the human-readable summary as a `text` block and, when `inline_images` is `true`, one MCP `image` content block per saved image (JPEG, PNG, or WebP as returned by the API).
 
 ## Error Codes
 
@@ -412,23 +441,38 @@ The tool returns errors as MCP error results with human-readable messages. Inter
 
 | Source code | Meaning | Auto-retry? |
 | --- | --- | --- |
+| `1000` / `1001` / `1024` / `1033` | Temporary upstream errors | ✅ exponential backoff |
 | `1002` | Rate limit exceeded | ✅ 60s backoff |
 | `1004` | Unauthorized (bad/missing API key) | ❌ fatal |
 | `1008` | Insufficient balance | ❌ fatal |
 | `1026` | Prompt blocked (sensitive input) | ❌ fatal |
 | `1027` | Output blocked (sensitive content) | ❌ fatal |
+| `1042` | Too many invisible/illegal characters | ❌ fatal |
+| `2013` | Invalid parameters | ❌ fatal |
+| `2022` / `2069` | Model unavailable or no access | ❌ fatal |
 | `2045` | Growth limit reached | ✅ 30s backoff |
 | `2049` | Invalid API key | ❌ fatal |
+| `2053` / `2067` | Insufficient credit / auto-consumption off | ❌ fatal |
 | `2056` | 5-hour quota exhausted | ❌ fatal |
+| `2061` / `2068` | Plan does not support the model | ❌ fatal |
+| `2062` | M Plan rate limit | ❌ fatal |
+| `2064` / `2066` | Server under high load / processing timeout | ✅ 5s backoff |
+| HTTP 429 | Transport rate limit | ✅ honors `Retry-After` |
+| HTTP 5xx | Transport/server error | ✅ exponential backoff |
 | `EMPTY_RESPONSE` | API returned success but no images | ❌ fatal (in-server error) |
 
-The text portion of the error result always includes a **Recovery** hint when one is available (e.g. "Aguarde 60s e tente novamente" for 1002).
+MiniMax reports application errors as **HTTP 200 with a non-zero `base_resp.status_code`**, so the server validates the `base_resp` envelope before the success payload. Unknown status codes are surfaced without retrying.
+
+The text portion of the error result always includes a **Recovery** hint when one is available (e.g. "Rate limit exceeded. Wait 60s and retry." for 1002).
 
 ## Best Practices
 
 - **Use `n=9` for batch** — same total cost, ~8× faster than 9 separate calls.
 - **Prefer `response_format='base64'`** — URLs returned by the API expire in 24 hours; base64 lets you persist indefinitely.
-- **Set timeouts appropriately in your MCP client** — `n=9` can take up to ~60s end-to-end; `n=1` is typically ~16s.
+- **Set `inline_images=false` for large batches** — image blocks are convenient for one or two images but consume model context when repeated.
+- **Use `width`/`height` when exact pixels matter** — they must be 512–2048 and divisible by 8; `aspect_ratio` is ignored when both are present.
+- **Use `model='image-01-live'` only with `subject_reference`** — it is designed for character consistency and ignores explicit dimensions.
+- **Set timeouts appropriately** — `n=9` can take up to ~60s end-to-end; `n=1` is typically ~16s. Tune with `MINIMAX_TIMEOUT_MS`.
 - **Avoid artificial delays** between requests — the rate limiter and the client's automatic retry handle pacing.
 - **Use seeds for variation grids** — request `n=4` with the same seed and slightly different prompts to get visually consistent iterations.
 - **Use `prompt_optimizer` selectively** — it improves prompt quality but adds latency and may shift semantic intent. Turn it off when you need pixel-level control.
@@ -438,7 +482,8 @@ The text portion of the error result always includes a **Recovery** hint when on
 - **Image URLs expire in 24h** when `response_format='url'`. Use `base64` for long-term storage.
 - **Rate limit:** 10 RPM officially documented, but the real bottleneck is ~16s of model latency per request.
 - **No streaming** — the entire image is returned in one response. For very large batches, consider chunking manually.
-- **Single model** — only `image-01` is supported. Adding models is a future enhancement.
+- **Two models** — `image-01` and `image-01-live`. Other MiniMax image models are not exposed.
+- **One reference image** — the upstream image-to-image API accepts a single character reference per request.
 - **No image editing** — this server generates new images only. Use a separate tool for inpainting or outpainting.
 
 ## Architecture
@@ -450,7 +495,7 @@ The text portion of the error result always includes a **Recovery** hint when on
 │   Cursor/...)       │    RPC     │                    │           │                 │
 └─────────────────────┘            └────────────────────┘           └─────────────────┘
                                             │
-                                            │ writes JPEGs
+                                            │ writes images
                                             ▼
                                     ┌────────────────┐
                                     │  output_dir    │
@@ -462,17 +507,19 @@ The text portion of the error result always includes a **Recovery** hint when on
 
 ```
 src/
-├── index.ts      # Entry point — validates env, connects stdio transport, handles SIGINT/SIGTERM
-├── server.ts     # McpServer creation, tool registration, output schema, progress notifications
-├── client.ts     # MiniMaxClient — fetch + retry with Full Jitter (AWS)
-├── schemas.ts    # Zod schemas (input, response, output)
-├── errors.ts     # MiniMaxApiError, EmptyResponseError, toErrorResult, toTextResult
-├── constants.ts  # API URLs, error codes, retry delays
-├── utils.ts      # Output directory resolution (path-traversal guarded), file saving, package metadata
-├── utils.test.ts # 25 unit tests
-├── client.test.ts # 13 unit tests (retry, jitter, exhaustion)
-├── schemas.test.ts # 22 unit tests (input/output validation)
-└── server.test.ts # 12 integration tests (tool callback, progress, failures)
+├── index.ts       # Entry point — validates env, connects stdio transport, handles SIGINT/SIGTERM
+├── server.ts      # McpServer creation, tool registration, inline images, progress notifications
+├── client.ts      # MiniMaxClient — envelope validation, HTTP handling, retry with Full Jitter
+├── http.ts        # Timeout- and cancellation-aware fetch helpers for text and binary bodies
+├── schemas.ts     # Zod schemas (input, error envelope, response, output)
+├── errors.ts      # MiniMaxApiError, MiniMaxHttpError, cancellation/timeout errors, result helpers
+├── constants.ts   # API URLs, models, limits, error codes, retry delays
+├── env.ts         # API key, timeout, and retry configuration from the environment
+├── utils.ts       # Output directory resolution, file saving, bounded downloads, package metadata
+├── utils.test.ts  # 50 unit tests
+├── client.test.ts # 24 unit tests (envelope, retry, timeout, cancellation)
+├── schemas.test.ts # 33 unit tests (input/output validation)
+└── server.test.ts # 19 integration tests (tool callback, inline images, failures)
 ```
 
 **Request flow:**
@@ -480,9 +527,11 @@ src/
 1. `index.ts` reads `MINIMAX_API_KEY` and constructs a `MiniMaxClient`.
 2. `createServer(client)` builds an `McpServer` and registers the `minimax_image_generate` tool with input/output Zod schemas.
 3. The client sends an MCP `tools/call` request on stdio.
-4. The server validates input, resolves `output_dir` (rejecting traversal), calls `client.generateImage(...)`, saves images in parallel via `Promise.allSettled`, and returns a structured result.
-5. The server sends optional `notifications/progress` to the client if a `progressToken` was provided in the request.
-6. On `SIGINT`/`SIGTERM`, the server calls `server.close()` and exits cleanly.
+4. The server validates input (including cross-field rules), resolves `output_dir` (rejecting relative escapes), and calls `client.generateImage(...)`.
+5. The client sends the request with timeout and cancellation, validates the `base_resp` envelope, and retries transient failures.
+6. The server saves images in parallel via `Promise.allSettled`, returns structured output, and attaches inline image blocks when enabled.
+7. The server sends optional `notifications/progress` to the client if a `progressToken` was provided in the request.
+8. On `SIGINT`/`SIGTERM`, the server calls `server.close()` and exits cleanly.
 
 ## Development
 
@@ -520,7 +569,7 @@ npm install
 The test suite uses [Vitest](https://vitest.dev/) with `v8` coverage. The CI matrix runs on Ubuntu, Windows, and macOS, across Node 20 and Node 22 — 6 combinations total.
 
 ```bash
-npm test            # 72 tests, ~1.4s
+npm test            # 159 tests, ~1.5s
 npm run coverage    # report in coverage/, thresholds enforced
 ```
 
@@ -533,7 +582,7 @@ npm run coverage    # report in coverage/, thresholds enforced
 | Functions | 70% |
 | Lines | 70% |
 
-Current coverage: **90% lines, 83% branches, 89% functions, 90% statements.**
+Current coverage: **93.9% lines, 89.8% branches, 95.9% functions, 93.9% statements.**
 
 ## Security
 

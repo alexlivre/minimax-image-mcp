@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-11-11
+
+### Added
+
+- **Inline image blocks:** the tool now returns MCP `image` content blocks (`inline_images`, default `true`) alongside the saved file paths.
+- **Explicit dimensions:** `width` and `height` parameters (512–2048 px, divisible by 8). When both are present they replace `aspect_ratio` in the upstream request.
+- **Model selection:** `model` parameter supporting `image-01` and `image-01-live`.
+- **Configurable reliability:** `MINIMAX_TIMEOUT_MS` and `MINIMAX_MAX_RETRIES` environment variables.
+- **Retry-After support:** HTTP 429 responses honor the `Retry-After` header.
+- **Bounded downloads:** URL downloads are capped at 20 MB and image bytes are validated before saving.
+- **MCP Registry metadata:** `server.json` and `mcpName` for registry ownership verification.
+
+### Fixed
+
+- **Error envelope parsing:** MiniMax reports failures as HTTP 200 with a non-zero `base_resp.status_code`. The client now validates the envelope before the success payload, so rate-limit errors (1002/2045) are classified and retried instead of surfacing as "Unexpected API response shape".
+- **Cancellation propagation:** aborting a tool call now cancels the upstream request and URL downloads, not just the save phase.
+- **Reference image constraints:** `subject_reference` is limited to one image (matching the API) and accepts base64 data URLs (JPEG/PNG, under 10 MB).
+- **Error taxonomy:** added 2013, 2022, 2053, 2061, 2062, 2064, 2066, 2067, 2068, 2069, and 1042; unknown codes are no longer retried blindly.
+- **Response robustness:** metadata counts accept strings or numbers, HTTP status is reported for non-JSON errors, and invalid response shapes are non-retryable.
+- **Filenames:** accented prompts are transliterated (`coração` → `coracao`) instead of losing characters.
+
+### Changed
+
+- Upgraded `@modelcontextprotocol/sdk` to 1.32.2 and Zod to 4.6.6.
+- Raised the test suite from 125 to 159 tests; coverage is 93.9% lines / 89.8% branches / 95.9% functions.
+- README, error table, and architecture notes updated to match the current API and parameters.
+
 ## [1.0.4] - 2026-07-31
 
 ### Fixed

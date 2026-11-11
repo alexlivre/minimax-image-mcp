@@ -1,11 +1,21 @@
 import { mkdir } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  CallToolResult,
+  ServerNotification,
+  ServerRequest,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { MiniMaxClient } from "./client.js";
-import { ImageGenerateOutputSchema, ImageGenerateSchema } from "./schemas.js";
-import { EmptyResponseError, toErrorResult, toTextResult } from "./errors.js";
-import { downloadImageFromUrl, readPackageMetadata, resolveOutputDir, saveImage } from "./utils.js";
+import { ImageGenerateOutputSchema, ImageGenerateSchema, ImageGenerateSchemaBase } from "./schemas.js";
+import { EmptyResponseError, RequestCancelledError, toErrorResult } from "./errors.js";
+import {
+  downloadImageFromUrl,
+  readPackageMetadata,
+  resolveOutputDir,
+  saveImage,
+  type SavedImage,
+} from "./utils.js";
 
 const { name: PKG_NAME, version: PKG_VERSION } = readPackageMetadata();
 
@@ -26,6 +36,12 @@ function createProgressNotifier(extra: RequestHandlerExtra<ServerRequest, Server
   };
 }
 
+function formatValidationError(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
+  return error.issues
+    .map((issue) => `${issue.path.map(String).join(".") || "input"}: ${issue.message}`)
+    .join("; ");
+}
+
 export function createServer(client: MiniMaxClient): McpServer {
   const server = new McpServer(
     { name: PKG_NAME, version: PKG_VERSION },
@@ -34,22 +50,26 @@ export function createServer(client: MiniMaxClient): McpServer {
         "This server wraps MiniMax's image-01 image generation API.",
         "",
         "Capabilities:",
-        "  • Text-to-Image generation with various aspect ratios",
-        "  • Batch generation (1-9 images per call, 8× faster than individual calls)",
-        "  • Image-to-Image with character reference images",
+        "  • Text-to-Image generation with various aspect ratios or explicit width/height",
+        "  • Batch generation (1-9 images per call, 8x faster than individual calls)",
+        "  • Image-to-Image with a single character reference image",
         "  • Prompt optimization",
         "  • Seed-based reproducibility",
+        "  • Optional inline image content blocks (inline_images, default true)",
         "",
         "Generated images are saved to disk at ./output/ by default (relative to the MCP process cwd).",
         "To save into the user's project, pass output_dir as an absolute workspace path.",
         "Absolute output_dir is accepted. Relative paths must stay under the process cwd.",
         "Optional defaults: MINIMAX_OUTPUT_DIR. Optional lockdown: MINIMAX_ALLOWED_OUTPUT_ROOTS.",
+        "Optional tuning: MINIMAX_TIMEOUT_MS (default 60000), MINIMAX_MAX_RETRIES (default 3).",
         "",
         "Best practices:",
         "  • Pass absolute output_dir when saving into the open workspace (do not copy afterward)",
-        "  • Use n=9 for batch generation (same cost, 8× faster)",
+        "  • Use n=9 for batch generation (same cost, 8x faster)",
         "  • Use response_format='base64' for persistence (URLs expire in 24h)",
-        "  • Set timeout ≥ 60s for n=9",
+        "  • Set inline_images=false for large batches to save context",
+        "  • Use width/height (512-2048, divisible by 8) instead of aspect_ratio when exact dimensions matter",
+        "  • Use model='image-01-live' only with subject_reference for character consistency",
         "  • Don't add artificial delays between requests",
       ].join("\n"),
     }
@@ -61,11 +81,11 @@ export function createServer(client: MiniMaxClient): McpServer {
       title: "Generate Image (MiniMax)",
       description:
         "Generate images from text prompts using MiniMax's image-01 model. " +
-        "Supports multiple aspect ratios, batch generation (1-9 images), " +
-        "image-to-image with character references, prompt optimization, " +
+        "Supports multiple aspect ratios, explicit width/height, batch generation (1-9 images), " +
+        "image-to-image with a character reference, prompt optimization, " +
         "and seed-based reproducibility. " +
-        "Images are saved to disk and file paths are returned.",
-      inputSchema: ImageGenerateSchema.shape,
+        "Images are saved to disk, file paths are returned, and images can be attached inline.",
+      inputSchema: ImageGenerateSchemaBase.shape,
       outputSchema: ImageGenerateOutputSchema.shape,
       annotations: {
         readOnlyHint: false,
@@ -75,10 +95,22 @@ export function createServer(client: MiniMaxClient): McpServer {
       },
     },
     async (params, extra) => {
+      const validation = ImageGenerateSchema.safeParse(params);
+      if (!validation.success) {
+        return toErrorResult(
+          new Error(`Invalid input: ${formatValidationError(validation.error)}`),
+        );
+      }
+      const input = validation.data;
+
+      if (extra.signal.aborted) {
+        return toErrorResult(new RequestCancelledError());
+      }
+
       const notify = createProgressNotifier(extra);
 
       try {
-        const outputDir = resolveOutputDir(params.output_dir);
+        const outputDir = resolveOutputDir(input.output_dir);
         await mkdir(outputDir, { recursive: true }).catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
           throw new Error(
@@ -86,18 +118,24 @@ export function createServer(client: MiniMaxClient): McpServer {
           );
         });
 
-        const total = params.n ?? 1;
+        const total = input.n ?? 1;
         await notify(0, total, "Requesting MiniMax API...");
 
-        const response = await client.generateImage({
-          prompt: params.prompt,
-          aspect_ratio: params.aspect_ratio,
-          n: params.n,
-          seed: params.seed,
-          response_format: params.response_format,
-          prompt_optimizer: params.prompt_optimizer,
-          subject_reference: params.subject_reference,
-        });
+        const response = await client.generateImage(
+          {
+            prompt: input.prompt,
+            model: input.model,
+            aspect_ratio: input.aspect_ratio,
+            width: input.width,
+            height: input.height,
+            n: input.n,
+            seed: input.seed,
+            response_format: input.response_format,
+            prompt_optimizer: input.prompt_optimizer,
+            subject_reference: input.subject_reference,
+          },
+          extra.signal,
+        );
 
         const imagesBase64 = response.data?.image_base64 ?? [];
         const imageUrls = response.data?.image_urls ?? [];
@@ -109,17 +147,17 @@ export function createServer(client: MiniMaxClient): McpServer {
         const imageCount = imagesBase64.length + imageUrls.length;
         await notify(imageCount, imageCount, "Saving images to disk...");
 
-        const abortAwareSave = (promise: Promise<string>): Promise<string> => {
+        const abortAware = <T>(promise: Promise<T>): Promise<T> => {
           if (extra.signal.aborted) {
-            return Promise.reject(new Error("Operation cancelled by client"));
+            return Promise.reject(new RequestCancelledError());
           }
-          return new Promise<string>((resolve, reject) => {
+          return new Promise<T>((resolve, reject) => {
             const onAbort = () => {
               extra.signal.removeEventListener("abort", onAbort);
-              reject(new Error("Operation cancelled by client"));
+              reject(new RequestCancelledError());
             };
             if (extra.signal.aborted) {
-              reject(new Error("Operation cancelled by client"));
+              reject(new RequestCancelledError());
               return;
             }
             extra.signal.addEventListener("abort", onAbort, { once: true });
@@ -129,38 +167,56 @@ export function createServer(client: MiniMaxClient): McpServer {
           });
         };
 
-        const base64Promises = imagesBase64.map((image, i) =>
-          abortAwareSave(saveImage(image, params.prompt, outputDir, i))
-        );
+        type SavedWithSource = SavedImage & { base64: string };
 
-        const urlPromises = imageUrls.map(async (url, i) => {
-          const buffer = await downloadImageFromUrl(url);
-          const base64 = buffer.toString("base64");
-          return saveImage(base64, params.prompt, outputDir, imagesBase64.length + i);
-        }).map(abortAwareSave);
+        const tasks: Array<Promise<SavedWithSource>> = [];
 
-        const results = await Promise.allSettled([...base64Promises, ...urlPromises]);
+        imagesBase64.forEach((image, i) => {
+          tasks.push(
+            abortAware(saveImage(image, input.prompt, outputDir, i)).then(
+              (saved) => ({ ...saved, base64: image }),
+            ),
+          );
+        });
 
-        const savedPaths: string[] = [];
+        imageUrls.forEach((url, i) => {
+          const index = imagesBase64.length + i;
+          tasks.push(
+            abortAware(
+              (async () => {
+                const buffer = await downloadImageFromUrl(url, extra.signal);
+                const base64 = buffer.toString("base64");
+                const saved = await saveImage(base64, input.prompt, outputDir, index);
+                return { ...saved, base64 };
+              })(),
+            ),
+          );
+        });
+
+        const results = await Promise.allSettled(tasks);
+
+        const savedImages: SavedWithSource[] = [];
         const failures: Array<{ index: number; error: string }> = [];
-        for (const [i, r] of results.entries()) {
-          if (r.status === "fulfilled") {
-            savedPaths.push(r.value);
+        for (const [i, result] of results.entries()) {
+          if (result.status === "fulfilled") {
+            savedImages.push(result.value);
           } else {
             failures.push({
               index: i,
-              error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+              error: result.reason instanceof Error ? result.reason.message : String(result.reason),
             });
           }
         }
 
-        if (savedPaths.length === 0) {
+        if (savedImages.length === 0) {
           return toErrorResult(
             new Error(
               `Failed to save all ${imageCount} image(s): ${failures.map(f => f.error).join("; ")}`
             )
           );
         }
+
+        const savedPaths = savedImages.map((image) => image.path);
 
         const textLines = [
           `Generated ${imageCount} image(s); saved ${savedPaths.length}.`,
@@ -173,16 +229,36 @@ export function createServer(client: MiniMaxClient): McpServer {
             : []),
           "",
           `Metadata: ${response.metadata.success_count} succeeded, ${response.metadata.failed_count} failed`,
+          ...(input.inline_images
+            ? ["", `Attached ${savedImages.length} image(s) inline as MCP image content.`]
+            : []),
         ];
 
-        return toTextResult(textLines.join("\n"), {
-          id: response.id,
-          image_count: imageCount,
-          saved_count: savedPaths.length,
-          file_paths: savedPaths,
-          ...(failures.length > 0 ? { failures } : {}),
-          metadata: response.metadata,
-        });
+        const content: CallToolResult["content"] = [
+          { type: "text", text: textLines.join("\n") },
+        ];
+
+        if (input.inline_images) {
+          for (const saved of savedImages) {
+            content.push({
+              type: "image",
+              data: saved.base64,
+              mimeType: saved.mimeType,
+            });
+          }
+        }
+
+        return {
+          content,
+          structuredContent: {
+            id: response.id,
+            image_count: imageCount,
+            saved_count: savedPaths.length,
+            file_paths: savedPaths,
+            ...(failures.length > 0 ? { failures } : {}),
+            metadata: response.metadata,
+          },
+        };
       } catch (error) {
         return toErrorResult(error);
       }

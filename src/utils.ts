@@ -4,9 +4,16 @@ import { randomUUID } from "node:crypto";
 import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DOWNLOAD_TIMEOUT_MS } from "./constants.js";
+import { DOWNLOAD_TIMEOUT_MS, MAX_DOWNLOAD_BYTES } from "./constants.js";
+import { fetchBuffer } from "./http.js";
 
 export const DEFAULT_OUTPUT_DIR = "./output";
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+};
 
 /** True when `child` is `parent` or a path under `parent`. */
 export function isPathInside(child: string, parent: string): boolean {
@@ -58,6 +65,8 @@ export function resolveOutputDir(dir?: string): string {
 export function sanitizeFilename(prompt: string, maxLength = 50): string {
   return (
     prompt
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase()
       .replace(/[^a-z0-9\s-]/g, "")
       .replace(/\s+/g, "-")
@@ -87,12 +96,17 @@ export function isValidImage(buffer: Buffer): boolean {
   );
 }
 
+export interface SavedImage {
+  path: string;
+  mimeType: string;
+}
+
 export async function saveImage(
   base64Data: string,
   prompt: string,
   outputDir: string,
   index: number
-): Promise<string> {
+): Promise<SavedImage> {
   const timestamp = Date.now();
   const slug = sanitizeFilename(prompt);
   const suffix = randomUUID().slice(0, 8);
@@ -111,25 +125,40 @@ export async function saveImage(
 
   await writeFile(filepath, buffer);
 
-  return filepath;
+  return {
+    path: filepath,
+    mimeType: MIME_BY_EXTENSION[extension] ?? "image/jpeg",
+  };
 }
 
-export async function downloadImageFromUrl(url: string): Promise<Buffer> {
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    throw new Error(
-      `Failed to download image from URL: ${response.status} ${response.statusText}`
-    );
-  }
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
+export async function downloadImageFromUrl(
+  url: string,
+  signal?: AbortSignal,
+): Promise<Buffer> {
+  const { buffer } = await fetchBuffer(
+    url,
+    { method: "GET" },
+    {
+      requestTimeoutMs: DOWNLOAD_TIMEOUT_MS,
+      bodyTimeoutMs: DOWNLOAD_TIMEOUT_MS,
+      signal,
+    },
+    MAX_DOWNLOAD_BYTES,
+    (response) => {
+      if (!response.ok) {
+        throw new Error(
+          `Failed to download image from URL: ${response.status} ${response.statusText}`,
+        );
+      }
+    },
+  );
+
   if (!isValidImage(buffer)) {
     throw new Error(
       `Downloaded data from URL is not a valid image: ${url}`
     );
   }
+
   return buffer;
 }
 
